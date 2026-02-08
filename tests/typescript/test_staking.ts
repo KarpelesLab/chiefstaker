@@ -1883,6 +1883,198 @@ async function runTests() {
   });
 
   // ============================================
+  // SECURITY REGRESSION TESTS
+  // ============================================
+  // Verify fixes for identified security audit findings
+
+  console.log('\n--- Security Regression Tests ---\n');
+
+  // Test: DepositRewards + SyncRewards does not double-count
+  await test('Security: DepositRewards + SyncRewards does not double-count', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(5)); // Short tau
+
+    const user = Keypair.generate();
+    await connection.requestAirdrop(user.publicKey, 2 * LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(1_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    // Wait for weight to accumulate
+    console.log('    Waiting 10s for weight...');
+    await new Promise(r => setTimeout(r, 10000));
+
+    // Deposit via instruction
+    const depositAmount = BigInt(LAMPORTS_PER_SOL);
+    await ctx.depositRewards(depositAmount);
+
+    // Call sync_rewards - should find NO new rewards (deposit already accounted for)
+    await ctx.syncRewards();
+
+    // Claim - user should get approximately depositAmount, NOT 2x
+    const balanceBefore = await ctx.getBalance(user.publicKey);
+    await ctx.claimRewards(user);
+    const balanceAfter = await ctx.getBalance(user.publicKey);
+    const claimed = BigInt(balanceAfter - balanceBefore);
+
+    console.log(`    Deposited: ${depositAmount} lamports`);
+    console.log(`    Claimed: ${claimed} lamports`);
+
+    // Claimed should be <= depositAmount (accounting for tx fees and weight < 100%)
+    // If double-counted, claimed would be close to 2x depositAmount
+    if (claimed > depositAmount + BigInt(10000)) {
+      throw new Error(`Double-counting detected! Claimed ${claimed} > deposited ${depositAmount}`);
+    }
+  });
+
+  // Test: Additional stake does not allow reward theft
+  await test('Security: Additional stake does not allow reward theft', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(5)); // Short tau
+
+    const attacker = Keypair.generate();
+    await connection.requestAirdrop(attacker.publicKey, 2 * LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+
+    const attackerToken = await ctx.createUserTokenAccount(attacker.publicKey);
+    const smallStake = BigInt(1_000); // tiny initial stake
+    const largeStake = BigInt(1_000_000_000); // 1 billion additional
+    await ctx.mintTokens(attackerToken, smallStake + largeStake);
+
+    // Stake small amount
+    await ctx.stake(attacker, attackerToken, smallStake);
+
+    // Wait for weight to accumulate
+    console.log('    Waiting 10s for weight...');
+    await new Promise(r => setTimeout(r, 10000));
+
+    // Deposit rewards
+    const depositAmount = BigInt(LAMPORTS_PER_SOL);
+    await ctx.depositRewards(depositAmount);
+
+    // Now add large stake (attack vector: reward_debt stays at old small-stake value)
+    await ctx.stake(attacker, attackerToken, largeStake);
+
+    // Claim - should get rewards proportional to the ORIGINAL small stake, not the new large stake
+    const balanceBefore = await ctx.getBalance(attacker.publicKey);
+    try {
+      await ctx.claimRewards(attacker);
+    } catch (e) {
+      // May fail if no pending rewards (correct behavior)
+    }
+    const balanceAfter = await ctx.getBalance(attacker.publicKey);
+    const claimed = BigInt(balanceAfter - balanceBefore);
+
+    console.log(`    Small stake: ${smallStake}, Large additional: ${largeStake}`);
+    console.log(`    Deposited: ${depositAmount} lamports`);
+    console.log(`    Claimed: ${claimed} lamports`);
+
+    // With the fix, reward_debt is recalculated on additional stake,
+    // so the attacker shouldn't be able to claim more than what the small stake earned.
+    // A reasonable upper bound: all rewards (since they were the only staker).
+    // But claimed should NOT be inflated by the large stake addition.
+    // The key check: claimed should be roughly proportional to the deposit, not vastly more.
+    if (claimed > depositAmount + BigInt(10000)) {
+      throw new Error(`Reward theft detected! Claimed ${claimed} >> deposited ${depositAmount}`);
+    }
+  });
+
+  // Test: Claim then SyncRewards works for new deposits
+  await test('Security: Claim then SyncRewards works for new deposits', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(5)); // Short tau
+
+    const user = Keypair.generate();
+    await connection.requestAirdrop(user.publicKey, 3 * LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(1_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    // Wait for weight
+    console.log('    Waiting 10s for weight...');
+    await new Promise(r => setTimeout(r, 10000));
+
+    // Deposit and claim
+    await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL / 2));
+    const bal1Before = await ctx.getBalance(user.publicKey);
+    await ctx.claimRewards(user);
+    const claim1 = BigInt((await ctx.getBalance(user.publicKey)) - bal1Before);
+    console.log(`    First claim: ${claim1} lamports`);
+
+    // Send SOL directly to pool (simulating pump.fun)
+    const directAmount = BigInt(LAMPORTS_PER_SOL / 2);
+    await ctx.sendSolToPool(directAmount);
+
+    // Sync rewards - should detect the new direct SOL
+    await ctx.syncRewards();
+
+    // Claim again - should get the new rewards
+    const bal2Before = await ctx.getBalance(user.publicKey);
+    await ctx.claimRewards(user);
+    const claim2 = BigInt((await ctx.getBalance(user.publicKey)) - bal2Before);
+    console.log(`    Second claim (after direct SOL + sync): ${claim2} lamports`);
+
+    // Second claim should be > 0 (new rewards were synced)
+    if (claim2 <= BigInt(0)) {
+      throw new Error(`SyncRewards failed to detect new deposits after claim! Got ${claim2}`);
+    }
+  });
+
+  // Test: Unstake rewards then SyncRewards works
+  await test('Security: Unstake rewards then SyncRewards works', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(5)); // Short tau
+
+    const user = Keypair.generate();
+    await connection.requestAirdrop(user.publicKey, 3 * LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(2_000_000_000));
+    await ctx.stake(user, userToken, BigInt(2_000_000_000));
+
+    // Wait for weight
+    console.log('    Waiting 10s for weight...');
+    await new Promise(r => setTimeout(r, 10000));
+
+    // Deposit rewards
+    await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL / 2));
+
+    // Unstake half (this claims pending rewards and reduces last_synced_lamports)
+    await ctx.unstake(user, userToken, BigInt(1_000_000_000));
+
+    // Send more SOL directly to pool
+    const directAmount = BigInt(LAMPORTS_PER_SOL / 2);
+    await ctx.sendSolToPool(directAmount);
+
+    // Sync rewards - should detect the new direct SOL
+    await ctx.syncRewards();
+
+    // Claim - should get the new rewards
+    const balBefore = await ctx.getBalance(user.publicKey);
+    await ctx.claimRewards(user);
+    const claimed = BigInt((await ctx.getBalance(user.publicKey)) - balBefore);
+    console.log(`    Claim after unstake + new SOL + sync: ${claimed} lamports`);
+
+    // Claimed should be > 0
+    if (claimed <= BigInt(0)) {
+      throw new Error(`SyncRewards failed after unstake! Got ${claimed}`);
+    }
+  });
+
+  // ============================================
   // STRESS TESTS: Simulate 1 million stakers
   // ============================================
   // Since operations are O(1), complexity depends on value magnitudes, not staker count.

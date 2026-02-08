@@ -16,7 +16,7 @@ use spl_token_2022::extension::StateWithExtensions;
 
 use crate::{
     error::StakingError,
-    math::{exp_time_ratio, wad_mul, U256, WAD},
+    math::{calculate_user_weighted_stake, exp_time_ratio, wad_mul, U256, WAD},
     state::{StakingPool, UserStake, STAKE_SEED},
 };
 
@@ -220,6 +220,16 @@ pub fn process_stake(
         user_stake.exp_start_factor = new_exp_factor;
         // Note: stake_time stays as original for weight calculation purposes
         user_stake.last_stake_time = current_time;
+
+        // Recalculate reward_debt for new weighted stake to prevent reward theft
+        let new_user_weighted = calculate_user_weighted_stake(
+            total_amount,
+            new_exp_factor,
+            current_time,
+            pool.base_time,
+            pool.tau_seconds,
+        )?;
+        user_stake.reward_debt = wad_mul(new_user_weighted, pool.acc_reward_per_weighted_share)?;
 
         let mut stake_data = user_stake_info.try_borrow_mut_data()?;
         user_stake.serialize(&mut &mut stake_data[..])?;

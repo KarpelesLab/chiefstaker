@@ -79,6 +79,8 @@ pub fn execute_unstake<'a>(
                     // Transfer SOL rewards from pool to user
                     **pool_info.try_borrow_mut_lamports()? -= transfer_amount;
                     **user_info.try_borrow_mut_lamports()? += transfer_amount;
+                    // Update last_synced_lamports so sync_rewards doesn't miss new deposits
+                    pool.last_synced_lamports = pool.last_synced_lamports.saturating_sub(transfer_amount);
                     msg!("Claimed {} lamports in rewards", transfer_amount);
                 }
             }

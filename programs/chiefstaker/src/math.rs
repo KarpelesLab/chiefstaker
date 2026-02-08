@@ -99,17 +99,6 @@ pub fn wad_mul_u256(a: U256, b: U256) -> Result<U256, StakingError> {
         .ok_or(StakingError::MathOverflow)
 }
 
-/// U256 version of wad_div
-pub fn wad_div_u256(a: U256, b: U256) -> Result<U256, StakingError> {
-    if b.is_zero() {
-        return Err(StakingError::MathOverflow);
-    }
-    a.checked_mul(WAD_U256)
-        .ok_or(StakingError::MathOverflow)?
-        .checked_div(b)
-        .ok_or(StakingError::MathOverflow)
-}
-
 /// Calculate e^x where x is WAD-scaled (x = actual_value * WAD)
 /// Uses range reduction: e^x = 2^(x/ln(2)) = 2^n * 2^f
 /// where n is integer part and f is fractional part
@@ -346,6 +335,30 @@ mod tests {
         let ratio = weight * 100 / max_weight;
         // Should be ~63%
         assert!(ratio >= 62 && ratio <= 64, "Weight at tau = {}%", ratio);
+    }
+
+    #[test]
+    fn test_u128_min_before_truncation() {
+        // Verify that taking min() in u128 space before truncating to u64 is correct.
+        // Bug scenario: pending_lamports overflows u64, truncation discards high bits.
+        let pending_lamports: u128 = (u64::MAX as u128) + 1_000_000; // > u64::MAX
+        let available_rewards: u64 = 500_000_000; // 0.5 SOL
+
+        // CORRECT: min in u128 space, then truncate
+        let correct = pending_lamports.min(available_rewards as u128) as u64;
+        assert_eq!(correct, available_rewards);
+
+        // INCORRECT (old bug): truncate first, then min
+        let buggy = (pending_lamports as u64).min(available_rewards);
+        // pending_lamports as u64 wraps around, giving a small number
+        // which is less than available_rewards, so user gets less than they should
+        assert_ne!(buggy, available_rewards, "truncation before min gives wrong result");
+
+        // Also verify when pending_lamports fits in u64
+        let small_pending: u128 = 100_000;
+        let large_available: u64 = 500_000_000;
+        let result = small_pending.min(large_available as u128) as u64;
+        assert_eq!(result, 100_000);
     }
 
     #[test]

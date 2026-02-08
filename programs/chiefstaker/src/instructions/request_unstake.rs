@@ -77,19 +77,17 @@ pub fn process_request_unstake(
         return Err(StakingError::InsufficientStakeBalance.into());
     }
 
+    let clock = Clock::get()?;
+    let current_time = clock.unix_timestamp;
+
     // Check lock duration has elapsed
     if pool.lock_duration_seconds > 0 {
-        let clock = Clock::get()?;
-        let current_time = clock.unix_timestamp;
         let last_stake = user_stake.effective_last_stake_time();
         let elapsed = current_time.saturating_sub(last_stake);
         if (elapsed as u64) < pool.lock_duration_seconds {
             return Err(StakingError::StakeLocked.into());
         }
     }
-
-    let clock = Clock::get()?;
-    let current_time = clock.unix_timestamp;
 
     // Set unstake request fields
     user_stake.unstake_request_amount = amount;

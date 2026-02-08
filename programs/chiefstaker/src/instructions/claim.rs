@@ -42,7 +42,7 @@ pub fn process_claim_rewards(
     if pool_info.owner != program_id {
         return Err(StakingError::InvalidAccountOwner.into());
     }
-    let pool = StakingPool::try_from_slice(&pool_info.try_borrow_data()?)?;
+    let mut pool = StakingPool::try_from_slice(&pool_info.try_borrow_data()?)?;
     if !pool.is_initialized() {
         return Err(StakingError::NotInitialized.into());
     }
@@ -115,7 +115,7 @@ pub fn process_claim_rewards(
         return Err(StakingError::InsufficientRewardBalance.into());
     }
 
-    let transfer_amount = (pending_lamports as u64).min(available_rewards);
+    let transfer_amount = pending_lamports.min(available_rewards as u128) as u64;
 
     // Transfer SOL from pool to user
     **pool_info.try_borrow_mut_lamports()? -= transfer_amount;
@@ -124,9 +124,20 @@ pub fn process_claim_rewards(
     // Update reward debt to prevent double claiming
     user_stake.reward_debt = accumulated;
 
+    // Update last_synced_lamports so sync_rewards doesn't miss new deposits
+    pool.last_synced_lamports = pool.last_synced_lamports.saturating_sub(transfer_amount);
+
     // Save user stake
-    let mut stake_data = user_stake_info.try_borrow_mut_data()?;
-    user_stake.serialize(&mut &mut stake_data[..])?;
+    {
+        let mut stake_data = user_stake_info.try_borrow_mut_data()?;
+        user_stake.serialize(&mut &mut stake_data[..])?;
+    }
+
+    // Save pool state
+    {
+        let mut pool_data = pool_info.try_borrow_mut_data()?;
+        pool.serialize(&mut &mut pool_data[..])?;
+    }
 
     msg!("Claimed {} lamports in rewards", transfer_amount);
 

@@ -9,7 +9,7 @@ use crate::math::U256;
 pub const POOL_SEED: &[u8] = b"pool";
 pub const STAKE_SEED: &[u8] = b"stake";
 pub const TOKEN_VAULT_SEED: &[u8] = b"token_vault";
-pub const REWARD_VAULT_SEED: &[u8] = b"reward_vault";
+
 
 /// Account discriminators
 pub const POOL_DISCRIMINATOR: [u8; 8] = [0xc7, 0x5f, 0x7e, 0x2d, 0x3b, 0x1a, 0x9c, 0x4e];
@@ -154,10 +154,6 @@ impl StakingPool {
         Pubkey::find_program_address(&[TOKEN_VAULT_SEED, pool.as_ref()], program_id)
     }
 
-    /// Derive reward vault PDA (not used since we store SOL in pool account)
-    pub fn derive_reward_vault_pda(pool: &Pubkey, program_id: &Pubkey) -> (Pubkey, u8) {
-        Pubkey::find_program_address(&[REWARD_VAULT_SEED, pool.as_ref()], program_id)
-    }
 }
 
 /// User stake account

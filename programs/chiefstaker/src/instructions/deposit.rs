@@ -8,6 +8,7 @@ use solana_program::{
     msg,
     program::invoke,
     pubkey::Pubkey,
+    rent::Rent,
     system_instruction,
     sysvar::Sysvar,
 };
@@ -71,6 +72,9 @@ pub fn process_deposit_rewards(
         pool.tau_seconds,
     )?;
 
+    let rent = Rent::get()?;
+    let rent_exempt_minimum = rent.minimum_balance(pool_info.data_len());
+
     if total_weighted < MIN_WEIGHTED_STAKE_FOR_DISTRIBUTION {
         // Not enough weighted stake to distribute rewards safely
         // Accept the deposit - it will be distributed once more weight accumulates
@@ -82,6 +86,13 @@ pub fn process_deposit_rewards(
                 system_program_info.clone(),
             ],
         )?;
+
+        // Update last_synced_lamports so sync_rewards doesn't double-count
+        pool.last_synced_lamports = pool_info.lamports().saturating_sub(rent_exempt_minimum);
+        {
+            let mut pool_data = pool_info.try_borrow_mut_data()?;
+            pool.serialize(&mut &mut pool_data[..])?;
+        }
 
         msg!(
             "Deposited {} lamports (weighted stake {} below threshold {})",
@@ -107,13 +118,7 @@ pub fn process_deposit_rewards(
 
     pool.last_update_time = current_time;
 
-    // Save pool state
-    {
-        let mut pool_data = pool_info.try_borrow_mut_data()?;
-        pool.serialize(&mut &mut pool_data[..])?;
-    }
-
-    // Transfer SOL from depositor to pool
+    // Transfer SOL from depositor to pool (before serialization so lamports() is updated)
     invoke(
         &system_instruction::transfer(depositor_info.key, pool_info.key, amount),
         &[
@@ -122,6 +127,15 @@ pub fn process_deposit_rewards(
             system_program_info.clone(),
         ],
     )?;
+
+    // Update last_synced_lamports so sync_rewards doesn't double-count
+    pool.last_synced_lamports = pool_info.lamports().saturating_sub(rent_exempt_minimum);
+
+    // Save pool state
+    {
+        let mut pool_data = pool_info.try_borrow_mut_data()?;
+        pool.serialize(&mut &mut pool_data[..])?;
+    }
 
     msg!(
         "Deposited {} lamports, total_weighted: {}, reward_per_share: {}",
