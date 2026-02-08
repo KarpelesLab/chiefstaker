@@ -20,76 +20,23 @@ use crate::{
     state::{StakingPool, UserStake, POOL_SEED},
 };
 
-/// Unstake tokens from the pool
+/// Shared unstake logic used by both process_unstake and process_complete_unstake.
+/// Handles: reward claiming, pool math updates (sum_stake_exp, total_staked),
+/// reward_debt recalculation, and token transfer.
 ///
-/// Accounts:
-/// 0. `[writable]` Pool account
-/// 1. `[writable]` User stake account
-/// 2. `[writable]` Token vault
-/// 3. `[writable]` User token account
-/// 4. `[]` Token mint
-/// 5. `[writable, signer]` User/owner
-/// 6. `[]` Token 2022 program
-pub fn process_unstake(
+/// Assumes all account validation has been done by the caller.
+pub fn execute_unstake<'a>(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    pool: &mut StakingPool,
+    user_stake: &mut UserStake,
+    pool_info: &AccountInfo<'a>,
+    user_stake_info: &AccountInfo<'a>,
+    token_vault_info: &AccountInfo<'a>,
+    user_token_info: &AccountInfo<'a>,
+    mint_info: &AccountInfo<'a>,
+    user_info: &AccountInfo<'a>,
     amount: u64,
 ) -> ProgramResult {
-    if amount == 0 {
-        return Err(StakingError::ZeroAmount.into());
-    }
-
-    let account_info_iter = &mut accounts.iter();
-
-    let pool_info = next_account_info(account_info_iter)?;
-    let user_stake_info = next_account_info(account_info_iter)?;
-    let token_vault_info = next_account_info(account_info_iter)?;
-    let user_token_info = next_account_info(account_info_iter)?;
-    let mint_info = next_account_info(account_info_iter)?;
-    let user_info = next_account_info(account_info_iter)?;
-    let _token_program_info = next_account_info(account_info_iter)?;
-
-    // Validate user is signer
-    if !user_info.is_signer {
-        return Err(StakingError::MissingRequiredSigner.into());
-    }
-
-    // Load and validate pool
-    if pool_info.owner != program_id {
-        return Err(StakingError::InvalidAccountOwner.into());
-    }
-    let mut pool = StakingPool::try_from_slice(&pool_info.try_borrow_data()?)?;
-    if !pool.is_initialized() {
-        return Err(StakingError::NotInitialized.into());
-    }
-
-    // Verify token vault
-    if pool.token_vault != *token_vault_info.key {
-        return Err(StakingError::InvalidTokenVault.into());
-    }
-
-    // Load and validate user stake
-    if user_stake_info.owner != program_id {
-        return Err(StakingError::InvalidAccountOwner.into());
-    }
-    let mut user_stake = UserStake::try_from_slice(&user_stake_info.try_borrow_data()?)?;
-    if !user_stake.is_initialized() {
-        return Err(StakingError::NotInitialized.into());
-    }
-
-    // Verify ownership
-    if user_stake.owner != *user_info.key {
-        return Err(StakingError::InvalidOwner.into());
-    }
-    if user_stake.pool != *pool_info.key {
-        return Err(StakingError::InvalidPool.into());
-    }
-
-    // Check sufficient balance
-    if user_stake.amount < amount {
-        return Err(StakingError::InsufficientStakeBalance.into());
-    }
-
     let clock = Clock::get()?;
     let current_time = clock.unix_timestamp;
 
@@ -222,4 +169,110 @@ pub fn process_unstake(
     msg!("Unstaked {} tokens", amount);
 
     Ok(())
+}
+
+/// Unstake tokens from the pool (direct unstake when cooldown is 0)
+///
+/// Accounts:
+/// 0. `[writable]` Pool account
+/// 1. `[writable]` User stake account
+/// 2. `[writable]` Token vault
+/// 3. `[writable]` User token account
+/// 4. `[]` Token mint
+/// 5. `[writable, signer]` User/owner
+/// 6. `[]` Token 2022 program
+pub fn process_unstake(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    amount: u64,
+) -> ProgramResult {
+    if amount == 0 {
+        return Err(StakingError::ZeroAmount.into());
+    }
+
+    let account_info_iter = &mut accounts.iter();
+
+    let pool_info = next_account_info(account_info_iter)?;
+    let user_stake_info = next_account_info(account_info_iter)?;
+    let token_vault_info = next_account_info(account_info_iter)?;
+    let user_token_info = next_account_info(account_info_iter)?;
+    let mint_info = next_account_info(account_info_iter)?;
+    let user_info = next_account_info(account_info_iter)?;
+    let _token_program_info = next_account_info(account_info_iter)?;
+
+    // Validate user is signer
+    if !user_info.is_signer {
+        return Err(StakingError::MissingRequiredSigner.into());
+    }
+
+    // Load and validate pool
+    if pool_info.owner != program_id {
+        return Err(StakingError::InvalidAccountOwner.into());
+    }
+    let mut pool = StakingPool::try_from_slice(&pool_info.try_borrow_data()?)?;
+    if !pool.is_initialized() {
+        return Err(StakingError::NotInitialized.into());
+    }
+
+    // If pool has a cooldown, reject direct unstake
+    if pool.unstake_cooldown_seconds > 0 {
+        return Err(StakingError::CooldownRequired.into());
+    }
+
+    // Verify token vault
+    if pool.token_vault != *token_vault_info.key {
+        return Err(StakingError::InvalidTokenVault.into());
+    }
+
+    // Load and validate user stake
+    if user_stake_info.owner != program_id {
+        return Err(StakingError::InvalidAccountOwner.into());
+    }
+    let mut user_stake = UserStake::try_from_slice(&user_stake_info.try_borrow_data()?)?;
+    if !user_stake.is_initialized() {
+        return Err(StakingError::NotInitialized.into());
+    }
+
+    // Verify ownership
+    if user_stake.owner != *user_info.key {
+        return Err(StakingError::InvalidOwner.into());
+    }
+    if user_stake.pool != *pool_info.key {
+        return Err(StakingError::InvalidPool.into());
+    }
+
+    // Check sufficient balance
+    if user_stake.amount < amount {
+        return Err(StakingError::InsufficientStakeBalance.into());
+    }
+
+    // Block if pending unstake request
+    if user_stake.has_pending_unstake_request() {
+        return Err(StakingError::PendingUnstakeRequestExists.into());
+    }
+
+    // Check lock duration
+    if pool.lock_duration_seconds > 0 {
+        let clock = Clock::get()?;
+        let current_time = clock.unix_timestamp;
+        let last_stake = user_stake.effective_last_stake_time();
+        let elapsed = current_time.saturating_sub(last_stake);
+        if (elapsed as u64) < pool.lock_duration_seconds {
+            return Err(StakingError::StakeLocked.into());
+        }
+    }
+
+    // Execute the shared unstake logic
+    execute_unstake(
+        program_id,
+        &mut pool,
+        &mut user_stake,
+        pool_info,
+        user_stake_info,
+        token_vault_info,
+        user_token_info,
+        mint_info,
+        user_info,
+        amount,
+    )
 }

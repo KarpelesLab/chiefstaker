@@ -60,8 +60,17 @@ pub struct StakingPool {
     /// Last known lamport balance (for sync_rewards to detect new deposits)
     pub last_synced_lamports: u64,
 
+    /// Minimum stake amount (0 = no minimum)
+    pub min_stake_amount: u64,
+
+    /// Lock duration in seconds after staking before unstake is allowed (0 = no lock)
+    pub lock_duration_seconds: u64,
+
+    /// Unstake cooldown period in seconds (0 = direct unstake, >0 = requires RequestUnstake flow)
+    pub unstake_cooldown_seconds: u64,
+
     /// Reserved space for future upgrades
-    pub _reserved: [u8; 56],
+    pub _reserved2: [u8; 32],
 }
 
 impl StakingPool {
@@ -79,7 +88,10 @@ impl StakingPool {
         8 +  // last_update_time
         1 +  // bump
         8 +  // last_synced_lamports
-        56;  // reserved
+        8 +  // min_stake_amount
+        8 +  // lock_duration_seconds
+        8 +  // unstake_cooldown_seconds
+        32;  // _reserved2
 
     /// Create a new staking pool
     pub fn new(
@@ -105,7 +117,10 @@ impl StakingPool {
             last_update_time: base_time,
             bump,
             last_synced_lamports: 0,
-            _reserved: [0u8; 56],
+            min_stake_amount: 0,
+            lock_duration_seconds: 0,
+            unstake_cooldown_seconds: 0,
+            _reserved2: [0u8; 32],
         }
     }
 
@@ -122,6 +137,11 @@ impl StakingPool {
     /// Check if pool is initialized
     pub fn is_initialized(&self) -> bool {
         self.discriminator == POOL_DISCRIMINATOR
+    }
+
+    /// Check if authority has been renounced (set to default/zero pubkey)
+    pub fn is_authority_renounced(&self) -> bool {
+        self.authority == Pubkey::default()
     }
 
     /// Derive pool PDA
@@ -170,8 +190,18 @@ pub struct UserStake {
     /// PDA bump seed
     pub bump: u8,
 
+    /// Pending unstake request amount (0 = no pending request)
+    pub unstake_request_amount: u64,
+
+    /// Timestamp when unstake was requested
+    pub unstake_request_time: i64,
+
+    /// Timestamp of most recent stake deposit (for lock duration checks)
+    /// Falls back to stake_time when 0 (for existing accounts)
+    pub last_stake_time: i64,
+
     /// Reserved space for future upgrades
-    pub _reserved: [u8; 32],
+    pub _reserved2: [u8; 8],
 }
 
 impl UserStake {
@@ -184,7 +214,10 @@ impl UserStake {
         16 + // exp_start_factor
         16 + // reward_debt
         1 +  // bump
-        32;  // reserved
+        8 +  // unstake_request_amount
+        8 +  // unstake_request_time
+        8 +  // last_stake_time
+        8;   // _reserved2
 
     /// Create a new user stake
     pub fn new(
@@ -204,7 +237,10 @@ impl UserStake {
             exp_start_factor,
             reward_debt: 0,
             bump,
-            _reserved: [0u8; 32],
+            unstake_request_amount: 0,
+            unstake_request_time: 0,
+            last_stake_time: stake_time,
+            _reserved2: [0u8; 8],
         }
     }
 
@@ -216,6 +252,20 @@ impl UserStake {
     /// Derive user stake PDA
     pub fn derive_pda(pool: &Pubkey, owner: &Pubkey, program_id: &Pubkey) -> (Pubkey, u8) {
         Pubkey::find_program_address(&[STAKE_SEED, pool.as_ref(), owner.as_ref()], program_id)
+    }
+
+    /// Get the effective last stake time (falls back to stake_time for existing accounts)
+    pub fn effective_last_stake_time(&self) -> i64 {
+        if self.last_stake_time != 0 {
+            self.last_stake_time
+        } else {
+            self.stake_time
+        }
+    }
+
+    /// Check if there is a pending unstake request
+    pub fn has_pending_unstake_request(&self) -> bool {
+        self.unstake_request_amount > 0
     }
 }
 

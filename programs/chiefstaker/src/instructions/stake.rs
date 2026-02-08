@@ -98,6 +98,11 @@ pub fn process_stake(
     let is_new_stake = user_stake_info.data_is_empty();
 
     if is_new_stake {
+        // Check minimum stake amount
+        if pool.min_stake_amount > 0 && amount < pool.min_stake_amount {
+            return Err(StakingError::BelowMinimumStake.into());
+        }
+
         // Create new user stake account
         let rent = Rent::get()?;
         let stake_rent = rent.minimum_balance(UserStake::LEN);
@@ -166,10 +171,19 @@ pub fn process_stake(
             return Err(StakingError::InvalidPool.into());
         }
 
-        // Calculate pending rewards before updating stake
-        // This ensures users don't lose rewards when adding to their stake
-        // Note: In a full implementation, we would claim rewards here
-        // For simplicity, we're just updating the stake
+        // Block staking while unstake request is pending
+        if user_stake.has_pending_unstake_request() {
+            return Err(StakingError::PendingUnstakeRequestExists.into());
+        }
+
+        // Check minimum stake amount on new total
+        let new_total = user_stake
+            .amount
+            .checked_add(amount)
+            .ok_or(StakingError::MathOverflow)?;
+        if pool.min_stake_amount > 0 && new_total < pool.min_stake_amount {
+            return Err(StakingError::BelowMinimumStake.into());
+        }
 
         // For additional stakes, we need to track a weighted average exp_start_factor
         // New exp_factor = (old_amount * old_exp + new_amount * new_exp) / total_amount
@@ -182,10 +196,7 @@ pub fn process_stake(
             exp_start_factor,
         )?;
 
-        let total_amount = user_stake
-            .amount
-            .checked_add(amount)
-            .ok_or(StakingError::MathOverflow)?;
+        let total_amount = new_total;
 
         // Update pool sum_stake_exp with new contribution
         let new_sum = pool
@@ -208,6 +219,7 @@ pub fn process_stake(
         user_stake.amount = total_amount;
         user_stake.exp_start_factor = new_exp_factor;
         // Note: stake_time stays as original for weight calculation purposes
+        user_stake.last_stake_time = current_time;
 
         let mut stake_data = user_stake_info.try_borrow_mut_data()?;
         user_stake.serialize(&mut &mut stake_data[..])?;

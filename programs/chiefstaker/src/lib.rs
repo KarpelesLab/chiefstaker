@@ -105,6 +105,57 @@ pub enum StakingInstruction {
     /// Accounts:
     /// 0. `[writable]` Pool account
     SyncRewards,
+
+    /// Update pool settings (authority only)
+    ///
+    /// Accounts:
+    /// 0. `[writable]` Pool account
+    /// 1. `[signer]` Authority
+    UpdatePoolSettings {
+        min_stake_amount: Option<u64>,
+        lock_duration_seconds: Option<u64>,
+        unstake_cooldown_seconds: Option<u64>,
+    },
+
+    /// Transfer pool authority to a new address
+    /// Setting to Pubkey::default() renounces authority (irreversible)
+    ///
+    /// Accounts:
+    /// 0. `[writable]` Pool account
+    /// 1. `[signer]` Current authority
+    TransferAuthority {
+        new_authority: Pubkey,
+    },
+
+    /// Request unstake - starts cooldown period (tokens remain staked)
+    ///
+    /// Accounts:
+    /// 0. `[writable]` Pool account
+    /// 1. `[writable]` User stake account
+    /// 2. `[signer]` User/owner
+    RequestUnstake {
+        amount: u64,
+    },
+
+    /// Complete unstake after cooldown elapsed
+    ///
+    /// Accounts (same as Unstake):
+    /// 0. `[writable]` Pool account
+    /// 1. `[writable]` User stake account
+    /// 2. `[writable]` Token vault
+    /// 3. `[writable]` User token account
+    /// 4. `[]` Token mint
+    /// 5. `[writable, signer]` User/owner
+    /// 6. `[]` Token 2022 program
+    CompleteUnstake,
+
+    /// Cancel a pending unstake request
+    ///
+    /// Accounts:
+    /// 0. `[]` Pool account
+    /// 1. `[writable]` User stake account
+    /// 2. `[signer]` User/owner
+    CancelUnstakeRequest,
 }
 
 #[cfg(not(feature = "no-entrypoint"))]
@@ -154,6 +205,36 @@ pub fn process_instruction(
         StakingInstruction::SyncRewards => {
             msg!("Instruction: SyncRewards");
             process_sync_rewards(program_id, accounts)
+        }
+        StakingInstruction::UpdatePoolSettings {
+            min_stake_amount,
+            lock_duration_seconds,
+            unstake_cooldown_seconds,
+        } => {
+            msg!("Instruction: UpdatePoolSettings");
+            process_update_pool_settings(
+                program_id,
+                accounts,
+                min_stake_amount,
+                lock_duration_seconds,
+                unstake_cooldown_seconds,
+            )
+        }
+        StakingInstruction::TransferAuthority { new_authority } => {
+            msg!("Instruction: TransferAuthority");
+            process_transfer_authority(program_id, accounts, new_authority)
+        }
+        StakingInstruction::RequestUnstake { amount } => {
+            msg!("Instruction: RequestUnstake (amount={})", amount);
+            process_request_unstake(program_id, accounts, amount)
+        }
+        StakingInstruction::CompleteUnstake => {
+            msg!("Instruction: CompleteUnstake");
+            process_complete_unstake(program_id, accounts)
+        }
+        StakingInstruction::CancelUnstakeRequest => {
+            msg!("Instruction: CancelUnstakeRequest");
+            process_cancel_unstake_request(program_id, accounts)
         }
     }
 }

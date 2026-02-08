@@ -48,6 +48,11 @@ enum InstructionType {
   DepositRewards = 4,
   SyncPool = 5,
   SyncRewards = 6,
+  UpdatePoolSettings = 7,
+  TransferAuthority = 8,
+  RequestUnstake = 9,
+  CompleteUnstake = 10,
+  CancelUnstakeRequest = 11,
 }
 
 // Helper to derive PDAs
@@ -203,6 +208,130 @@ function createSyncRewardsInstruction(pool: PublicKey): TransactionInstruction {
   return new TransactionInstruction({
     keys: [
       { pubkey: pool, isSigner: false, isWritable: true },
+    ],
+    programId: PROGRAM_ID,
+    data,
+  });
+}
+
+function createUpdatePoolSettingsInstruction(
+  pool: PublicKey,
+  authority: PublicKey,
+  minStakeAmount: bigint | null,
+  lockDurationSeconds: bigint | null,
+  unstakeCooldownSeconds: bigint | null,
+): TransactionInstruction {
+  // Borsh serialization: enum variant (u8) + 3x Option<u64>
+  // Option<u64> = 1 byte tag (0=None, 1=Some) + 8 bytes value if Some
+  let size = 1; // variant
+  size += 1 + (minStakeAmount !== null ? 8 : 0);
+  size += 1 + (lockDurationSeconds !== null ? 8 : 0);
+  size += 1 + (unstakeCooldownSeconds !== null ? 8 : 0);
+
+  const data = Buffer.alloc(size);
+  let offset = 0;
+  data.writeUInt8(InstructionType.UpdatePoolSettings, offset); offset += 1;
+
+  // Write Option<u64> for each
+  for (const val of [minStakeAmount, lockDurationSeconds, unstakeCooldownSeconds]) {
+    if (val !== null) {
+      data.writeUInt8(1, offset); offset += 1;
+      data.writeBigUInt64LE(val, offset); offset += 8;
+    } else {
+      data.writeUInt8(0, offset); offset += 1;
+    }
+  }
+
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    programId: PROGRAM_ID,
+    data,
+  });
+}
+
+function createTransferAuthorityInstruction(
+  pool: PublicKey,
+  authority: PublicKey,
+  newAuthority: PublicKey,
+): TransactionInstruction {
+  // Borsh: enum variant (u8) + pubkey (32 bytes)
+  const data = Buffer.alloc(1 + 32);
+  data.writeUInt8(InstructionType.TransferAuthority, 0);
+  newAuthority.toBuffer().copy(data, 1);
+
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    programId: PROGRAM_ID,
+    data,
+  });
+}
+
+function createRequestUnstakeInstruction(
+  pool: PublicKey,
+  userStake: PublicKey,
+  user: PublicKey,
+  amount: bigint,
+): TransactionInstruction {
+  const data = Buffer.alloc(1 + 8);
+  data.writeUInt8(InstructionType.RequestUnstake, 0);
+  data.writeBigUInt64LE(amount, 1);
+
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: userStake, isSigner: false, isWritable: true },
+      { pubkey: user, isSigner: true, isWritable: false },
+    ],
+    programId: PROGRAM_ID,
+    data,
+  });
+}
+
+function createCompleteUnstakeInstruction(
+  pool: PublicKey,
+  userStake: PublicKey,
+  tokenVault: PublicKey,
+  userToken: PublicKey,
+  mint: PublicKey,
+  user: PublicKey,
+): TransactionInstruction {
+  const data = Buffer.alloc(1);
+  data.writeUInt8(InstructionType.CompleteUnstake, 0);
+
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: userStake, isSigner: false, isWritable: true },
+      { pubkey: tokenVault, isSigner: false, isWritable: true },
+      { pubkey: userToken, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: user, isSigner: true, isWritable: true },
+      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    programId: PROGRAM_ID,
+    data,
+  });
+}
+
+function createCancelUnstakeRequestInstruction(
+  pool: PublicKey,
+  userStake: PublicKey,
+  user: PublicKey,
+): TransactionInstruction {
+  const data = Buffer.alloc(1);
+  data.writeUInt8(InstructionType.CancelUnstakeRequest, 0);
+
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: pool, isSigner: false, isWritable: false },
+      { pubkey: userStake, isSigner: false, isWritable: true },
+      { pubkey: user, isSigner: true, isWritable: false },
     ],
     programId: PROGRAM_ID,
     data,
@@ -371,6 +500,78 @@ class TestContext {
 
     const tx = new Transaction().add(ix);
     return await sendAndConfirmTransaction(this.connection, tx, [this.payer]);
+  }
+
+  async updatePoolSettings(
+    authority: Keypair,
+    minStakeAmount: bigint | null,
+    lockDurationSeconds: bigint | null,
+    unstakeCooldownSeconds: bigint | null,
+  ): Promise<string> {
+    const ix = createUpdatePoolSettingsInstruction(
+      this.poolPDA,
+      authority.publicKey,
+      minStakeAmount,
+      lockDurationSeconds,
+      unstakeCooldownSeconds,
+    );
+
+    const tx = new Transaction().add(ix);
+    return await sendAndConfirmTransaction(this.connection, tx, [this.payer, authority]);
+  }
+
+  async transferAuthority(currentAuthority: Keypair, newAuthority: PublicKey): Promise<string> {
+    const ix = createTransferAuthorityInstruction(
+      this.poolPDA,
+      currentAuthority.publicKey,
+      newAuthority,
+    );
+
+    const tx = new Transaction().add(ix);
+    return await sendAndConfirmTransaction(this.connection, tx, [this.payer, currentAuthority]);
+  }
+
+  async requestUnstake(user: Keypair, amount: bigint): Promise<string> {
+    const [userStakePDA] = deriveUserStakePDA(this.poolPDA, user.publicKey);
+
+    const ix = createRequestUnstakeInstruction(
+      this.poolPDA,
+      userStakePDA,
+      user.publicKey,
+      amount,
+    );
+
+    const tx = new Transaction().add(ix);
+    return await sendAndConfirmTransaction(this.connection, tx, [this.payer, user]);
+  }
+
+  async completeUnstake(user: Keypair, userToken: PublicKey): Promise<string> {
+    const [userStakePDA] = deriveUserStakePDA(this.poolPDA, user.publicKey);
+
+    const ix = createCompleteUnstakeInstruction(
+      this.poolPDA,
+      userStakePDA,
+      this.tokenVaultPDA,
+      userToken,
+      this.mint,
+      user.publicKey,
+    );
+
+    const tx = new Transaction().add(ix);
+    return await sendAndConfirmTransaction(this.connection, tx, [this.payer, user]);
+  }
+
+  async cancelUnstakeRequest(user: Keypair): Promise<string> {
+    const [userStakePDA] = deriveUserStakePDA(this.poolPDA, user.publicKey);
+
+    const ix = createCancelUnstakeRequestInstruction(
+      this.poolPDA,
+      userStakePDA,
+      user.publicKey,
+    );
+
+    const tx = new Transaction().add(ix);
+    return await sendAndConfirmTransaction(this.connection, tx, [this.payer, user]);
   }
 
   async getBalance(pubkey: PublicKey): Promise<number> {
@@ -612,6 +813,334 @@ async function runTests() {
     if (vaultBalance !== BigInt(1_500_000_000)) {
       throw new Error(`Expected vault balance 1500000000, got ${vaultBalance}`);
     }
+  });
+
+  // ============================================
+  // POOL SETTINGS / AUTHORITY TESTS
+  // ============================================
+
+  console.log('\n--- Pool Settings & Authority Tests ---\n');
+
+  // Test: Update pool settings
+  await test('UpdatePoolSettings: set min_stake, lock, cooldown', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    // Set all three settings
+    await ctx.updatePoolSettings(
+      ctx.payer,
+      BigInt(1_000_000), // min stake
+      null, // no lock
+      null, // no cooldown
+    );
+
+    // Now update lock duration only
+    await ctx.updatePoolSettings(
+      ctx.payer,
+      null,
+      BigInt(10), // 10 second lock
+      null,
+    );
+  });
+
+  // Test: Update settings with wrong authority fails
+  await test('UpdatePoolSettings: wrong authority rejected', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    const wrongAuth = Keypair.generate();
+    await connection.requestAirdrop(wrongAuth.publicKey, LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+
+    let failed = false;
+    try {
+      await ctx.updatePoolSettings(wrongAuth, BigInt(100), null, null);
+    } catch (e) {
+      failed = true;
+    }
+    if (!failed) throw new Error('Should reject wrong authority');
+  });
+
+  // Test: Transfer authority
+  await test('TransferAuthority: transfer and use new authority', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    const newAuth = Keypair.generate();
+    await connection.requestAirdrop(newAuth.publicKey, LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+
+    // Transfer authority
+    await ctx.transferAuthority(ctx.payer, newAuth.publicKey);
+
+    // Old authority should fail
+    let oldFailed = false;
+    try {
+      await ctx.updatePoolSettings(ctx.payer, BigInt(100), null, null);
+    } catch (e) {
+      oldFailed = true;
+    }
+    if (!oldFailed) throw new Error('Old authority should be rejected');
+
+    // New authority should work
+    await ctx.updatePoolSettings(newAuth, BigInt(100), null, null);
+  });
+
+  // Test: Renounce authority
+  await test('TransferAuthority: renounce (set to default pubkey)', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    // Renounce authority (set to default pubkey = zero)
+    await ctx.transferAuthority(ctx.payer, PublicKey.default);
+
+    // Authority should now be rejected
+    let failed = false;
+    try {
+      await ctx.updatePoolSettings(ctx.payer, BigInt(100), null, null);
+    } catch (e) {
+      failed = true;
+    }
+    if (!failed) throw new Error('Renounced authority should be rejected');
+  });
+
+  // Test: Min stake amount enforced on new stake
+  await test('MinStake: enforced on new stake', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    // Set min stake to 1 billion (1 token with 9 decimals)
+    await ctx.updatePoolSettings(ctx.payer, BigInt(1_000_000_000), null, null);
+
+    const user = Keypair.generate();
+    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(2_000_000_000));
+
+    // Stake below minimum should fail
+    let belowMinFailed = false;
+    try {
+      await ctx.stake(user, userToken, BigInt(500_000_000));
+    } catch (e) {
+      belowMinFailed = true;
+    }
+    if (!belowMinFailed) throw new Error('Below-minimum stake should fail');
+
+    // Stake at minimum should succeed
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+  });
+
+  // Test: Lock duration blocks early unstake
+  await test('LockDuration: blocks early unstake', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    // Set 10-second lock duration
+    await ctx.updatePoolSettings(ctx.payer, null, BigInt(10), null);
+
+    const user = Keypair.generate();
+    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(1_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    // Try unstake immediately - should fail (locked)
+    let lockedFailed = false;
+    try {
+      await ctx.unstake(user, userToken, BigInt(1_000_000_000));
+    } catch (e) {
+      lockedFailed = true;
+    }
+    if (!lockedFailed) throw new Error('Should reject unstake during lock period');
+
+    // Wait for lock to expire
+    console.log('    Waiting 11s for lock to expire...');
+    await new Promise(r => setTimeout(r, 11000));
+
+    // Now unstake should succeed
+    await ctx.unstake(user, userToken, BigInt(1_000_000_000));
+  });
+
+  // Test: Cooldown flow - request → wait → complete
+  await test('Cooldown: request → wait → complete unstake', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    // Set 5-second cooldown
+    await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(5));
+
+    const user = Keypair.generate();
+    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(1_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    // Direct unstake should fail (cooldown required)
+    let directFailed = false;
+    try {
+      await ctx.unstake(user, userToken, BigInt(1_000_000_000));
+    } catch (e) {
+      directFailed = true;
+    }
+    if (!directFailed) throw new Error('Direct unstake should fail with cooldown');
+
+    // Request unstake
+    await ctx.requestUnstake(user, BigInt(1_000_000_000));
+
+    // Complete immediately should fail (cooldown not elapsed)
+    let earlyFailed = false;
+    try {
+      await ctx.completeUnstake(user, userToken);
+    } catch (e) {
+      earlyFailed = true;
+    }
+    if (!earlyFailed) throw new Error('Complete unstake should fail before cooldown');
+
+    // Wait for cooldown
+    console.log('    Waiting 6s for cooldown...');
+    await new Promise(r => setTimeout(r, 6000));
+
+    // Complete unstake should now succeed
+    await ctx.completeUnstake(user, userToken);
+
+    const balance = await ctx.getTokenBalance(userToken);
+    if (balance !== BigInt(1_000_000_000)) {
+      throw new Error(`Expected 1000000000 tokens back, got ${balance}`);
+    }
+  });
+
+  // Test: Cancel unstake request
+  await test('Cooldown: cancel unstake request', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    // Set 60-second cooldown (long, we cancel before)
+    await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(60));
+
+    const user = Keypair.generate();
+    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(1_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    // Request unstake
+    await ctx.requestUnstake(user, BigInt(1_000_000_000));
+
+    // Cancel request
+    await ctx.cancelUnstakeRequest(user);
+
+    // Cancel again should fail (no pending request)
+    let doubleCancelFailed = false;
+    try {
+      await ctx.cancelUnstakeRequest(user);
+    } catch (e) {
+      doubleCancelFailed = true;
+    }
+    if (!doubleCancelFailed) throw new Error('Double cancel should fail');
+  });
+
+  // Test: Cannot stake while unstake request pending
+  await test('Cooldown: cannot stake while unstake pending', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    // Set cooldown
+    await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(60));
+
+    const user = Keypair.generate();
+    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(2_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    // Request unstake
+    await ctx.requestUnstake(user, BigInt(500_000_000));
+
+    // Staking more should fail
+    let stakeFailed = false;
+    try {
+      await ctx.stake(user, userToken, BigInt(500_000_000));
+    } catch (e) {
+      stakeFailed = true;
+    }
+    if (!stakeFailed) throw new Error('Should not stake while unstake pending');
+
+    // Cancel request, then stake should work
+    await ctx.cancelUnstakeRequest(user);
+    await ctx.stake(user, userToken, BigInt(500_000_000));
+  });
+
+  // Test: Cannot request unstake twice
+  await test('Cooldown: cannot request unstake twice', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(60));
+
+    const user = Keypair.generate();
+    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(1_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    // First request succeeds
+    await ctx.requestUnstake(user, BigInt(500_000_000));
+
+    // Second request should fail
+    let doubleRequestFailed = false;
+    try {
+      await ctx.requestUnstake(user, BigInt(500_000_000));
+    } catch (e) {
+      doubleRequestFailed = true;
+    }
+    if (!doubleRequestFailed) throw new Error('Double request should fail');
+  });
+
+  // Test: Existing pools (zero reserved fields) work unchanged
+  await test('Backward compat: existing pool works with zero settings', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    // With default settings (all zeros), everything should work as before
+    const user = Keypair.generate();
+    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
+    await new Promise(r => setTimeout(r, 500));
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(1_000_000_000));
+
+    // Stake works (no min stake)
+    await ctx.stake(user, userToken, BigInt(100));
+
+    // Unstake works immediately (no lock, no cooldown)
+    await ctx.unstake(user, userToken, BigInt(100));
   });
 
   // ============================================

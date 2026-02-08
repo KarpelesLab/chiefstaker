@@ -65,6 +65,27 @@ pub enum StakingError {
 
     #[error("Invalid account owner")]
     InvalidAccountOwner,
+
+    #[error("Stake amount below pool minimum")]
+    BelowMinimumStake,
+
+    #[error("Stake is locked - lock duration has not elapsed")]
+    StakeLocked,
+
+    #[error("Unstake cooldown period has not elapsed")]
+    CooldownNotElapsed,
+
+    #[error("Pool requires RequestUnstake flow, not direct Unstake")]
+    CooldownRequired,
+
+    #[error("No pending unstake request")]
+    NoPendingUnstakeRequest,
+
+    #[error("Must cancel existing unstake request first")]
+    PendingUnstakeRequestExists,
+
+    #[error("Authority has been renounced")]
+    AuthorityRenounced,
 }
 
 impl From<StakingError> for ProgramError {
