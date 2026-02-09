@@ -18,7 +18,7 @@ weight = stake_amount * (1 - e^(-age / tau))
 
 This prevents flash-stake attacks -- you can't just deposit right before a reward distribution and steal rewards from long-term stakers.
 
-SOL rewards are distributed proportionally based on each staker's current weight. Rewards can be deposited directly via instruction or sent to the pool PDA (e.g., from pump.fun fee revenue) and synced.
+SOL rewards are distributed using a max-weight denominator (`total_staked * WAD`) to prevent over-distribution. Each staker's claimable share grows as their weight matures, but can never exceed the deposited amount. Rewards can be deposited directly via instruction or sent to the pool PDA (e.g., from pump.fun fee revenue) and synced.
 
 ## Features
 
@@ -53,16 +53,17 @@ SOL rewards are distributed proportionally based on each staker's current weight
 | 9 | `RequestUnstake` | Start unstake cooldown (tokens keep earning) |
 | 10 | `CompleteUnstake` | Finish unstake after cooldown elapsed |
 | 11 | `CancelUnstakeRequest` | Cancel a pending unstake request |
+| 12 | `CloseStakeAccount` | Close zero-balance stake account to reclaim rent |
 
 ## Pool Settings
 
 Pool creators can configure these settings at any time (until authority is renounced):
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `min_stake_amount` | 0 (none) | Minimum tokens required to stake |
-| `lock_duration_seconds` | 0 (none) | Time staker must wait after last deposit before unstaking |
-| `unstake_cooldown_seconds` | 0 (none) | Required cooldown period via request/complete flow |
+| Setting | Default | Max | Description |
+|---------|---------|-----|-------------|
+| `min_stake_amount` | 0 (none) | -- | Minimum tokens required to stake |
+| `lock_duration_seconds` | 0 (none) | 365 days | Time staker must wait after last deposit before unstaking |
+| `unstake_cooldown_seconds` | 0 (none) | 30 days | Required cooldown period via request/complete flow |
 
 The tau value (`tau_seconds`) is set at pool creation and is **immutable**.
 
@@ -110,6 +111,7 @@ programs/chiefstaker/src/
     request_unstake.rs            # RequestUnstake
     complete_unstake.rs           # CompleteUnstake
     cancel_unstake.rs             # CancelUnstakeRequest
+    close_stake.rs                # CloseStakeAccount
 tests/typescript/
   test_staking.ts                 # E2E tests
 ```
