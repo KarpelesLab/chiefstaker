@@ -18,6 +18,7 @@ pub enum StakingError {
     #[error("Invalid token vault")]
     InvalidTokenVault,
 
+    /// UNUSED: Retained for ABI stability (error code numbering).
     #[error("Invalid reward vault")]
     InvalidRewardVault,
 
@@ -86,6 +87,9 @@ pub enum StakingError {
 
     #[error("Authority has been renounced")]
     AuthorityRenounced,
+
+    #[error("Pool has no cooldown configured - use direct Unstake instead")]
+    CooldownNotConfigured,
 }
 
 impl From<StakingError> for ProgramError {

@@ -77,13 +77,11 @@ pub fn process_sync_rewards(
     )?;
 
     if total_weighted < MIN_WEIGHTED_STAKE_FOR_DISTRIBUTION {
-        // Not enough weighted stake to distribute rewards safely
-        // Track the balance - rewards will be distributed once more weight accumulates
-        pool.last_synced_lamports = current_available;
-        let mut pool_data = pool_info.try_borrow_mut_data()?;
-        pool.serialize(&mut &mut pool_data[..])?;
+        // Not enough weighted stake to distribute rewards safely.
+        // Do NOT update last_synced_lamports so the rewards remain pending
+        // and will be distributed once sufficient weight accumulates.
         msg!(
-            "Synced {} lamports (weighted stake {} below threshold {})",
+            "Rewards deferred: {} new lamports, weighted stake {} below threshold {}",
             new_rewards,
             total_weighted,
             MIN_WEIGHTED_STAKE_FOR_DISTRIBUTION

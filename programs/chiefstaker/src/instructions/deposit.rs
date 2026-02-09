@@ -76,8 +76,10 @@ pub fn process_deposit_rewards(
     let rent_exempt_minimum = rent.minimum_balance(pool_info.data_len());
 
     if total_weighted < MIN_WEIGHTED_STAKE_FOR_DISTRIBUTION {
-        // Not enough weighted stake to distribute rewards safely
-        // Accept the deposit - it will be distributed once more weight accumulates
+        // Not enough weighted stake to distribute rewards safely.
+        // Accept the deposit but do NOT update last_synced_lamports so the
+        // rewards remain pending and will be distributed once sufficient
+        // weight accumulates (via sync_rewards or a future deposit).
         invoke(
             &system_instruction::transfer(depositor_info.key, pool_info.key, amount),
             &[
@@ -87,15 +89,8 @@ pub fn process_deposit_rewards(
             ],
         )?;
 
-        // Update last_synced_lamports so sync_rewards doesn't double-count
-        pool.last_synced_lamports = pool_info.lamports().saturating_sub(rent_exempt_minimum);
-        {
-            let mut pool_data = pool_info.try_borrow_mut_data()?;
-            pool.serialize(&mut &mut pool_data[..])?;
-        }
-
         msg!(
-            "Deposited {} lamports (weighted stake {} below threshold {})",
+            "Deposited {} lamports (deferred - weighted stake {} below threshold {})",
             amount,
             total_weighted,
             MIN_WEIGHTED_STAKE_FOR_DISTRIBUTION
@@ -103,9 +98,15 @@ pub fn process_deposit_rewards(
         return Ok(());
     }
 
+    // Include any previously undistributed rewards (e.g., from deposits made
+    // while total_weighted was below threshold) alongside this deposit.
+    let current_available = pool_info.lamports().saturating_sub(rent_exempt_minimum);
+    let undistributed = current_available.saturating_sub(pool.last_synced_lamports);
+    let total_new_rewards = (amount as u64).saturating_add(undistributed);
+
     // Calculate reward per weighted share
-    // reward_per_share = amount * WAD / total_weighted
-    let amount_wad = (amount as u128)
+    // reward_per_share = total_new_rewards * WAD / total_weighted
+    let amount_wad = (total_new_rewards as u128)
         .checked_mul(WAD)
         .ok_or(StakingError::MathOverflow)?;
     let reward_per_share = wad_div(amount_wad, total_weighted)?;
@@ -138,8 +139,9 @@ pub fn process_deposit_rewards(
     }
 
     msg!(
-        "Deposited {} lamports, total_weighted: {}, reward_per_share: {}",
+        "Deposited {} lamports (distributed {} total), total_weighted: {}, reward_per_share: {}",
         amount,
+        total_new_rewards,
         total_weighted,
         reward_per_share
     );

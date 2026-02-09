@@ -26,7 +26,7 @@ use crate::{
 ///
 /// Assumes all account validation has been done by the caller.
 pub fn execute_unstake<'a>(
-    program_id: &Pubkey,
+    _program_id: &Pubkey,
     pool: &mut StakingPool,
     user_stake: &mut UserStake,
     pool_info: &AccountInfo<'a>,
@@ -140,9 +140,7 @@ pub fn execute_unstake<'a>(
     let decimals = mint.base.decimals;
     drop(mint_data);
 
-    let (_, pool_bump) =
-        Pubkey::find_program_address(&[POOL_SEED, pool.mint.as_ref()], program_id);
-    let pool_seeds = &[POOL_SEED, pool.mint.as_ref(), &[pool_bump]];
+    let pool_seeds = &[POOL_SEED, pool.mint.as_ref(), &[pool.bump]];
 
     invoke_signed(
         &spl_token_2022::instruction::transfer_checked(
@@ -225,6 +223,11 @@ pub fn process_unstake(
         return Err(StakingError::CooldownRequired.into());
     }
 
+    // Verify mint matches pool
+    if pool.mint != *mint_info.key {
+        return Err(StakingError::InvalidPoolMint.into());
+    }
+
     // Verify token vault
     if pool.token_vault != *token_vault_info.key {
         return Err(StakingError::InvalidTokenVault.into());
@@ -245,6 +248,13 @@ pub fn process_unstake(
     }
     if user_stake.pool != *pool_info.key {
         return Err(StakingError::InvalidPool.into());
+    }
+
+    // Verify user stake PDA
+    let (expected_stake, _) =
+        UserStake::derive_pda(pool_info.key, user_info.key, program_id);
+    if *user_stake_info.key != expected_stake {
+        return Err(StakingError::InvalidPDA.into());
     }
 
     // Check sufficient balance

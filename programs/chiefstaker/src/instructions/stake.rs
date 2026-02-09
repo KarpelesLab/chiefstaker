@@ -206,13 +206,13 @@ pub fn process_stake(
         pool.set_sum_stake_exp(new_sum);
 
         // Calculate new weighted average exp_start_factor
+        // total_contribution is WAD-scaled (sum of amount_i * exp_factor_i),
+        // total_amount is raw, so division yields a WAD-scaled result directly.
         let total_contribution = old_contribution
             .checked_add(new_contribution)
             .ok_or(StakingError::MathOverflow)?;
         let new_exp_factor = total_contribution
-            .checked_div((total_amount as u128).checked_mul(WAD).ok_or(StakingError::MathOverflow)?)
-            .ok_or(StakingError::MathOverflow)?
-            .checked_mul(WAD)
+            .checked_div(total_amount as u128)
             .ok_or(StakingError::MathOverflow)?;
 
         // Update user stake

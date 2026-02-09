@@ -54,6 +54,11 @@ pub fn process_complete_unstake(
         return Err(StakingError::NotInitialized.into());
     }
 
+    // Verify mint matches pool
+    if pool.mint != *mint_info.key {
+        return Err(StakingError::InvalidPoolMint.into());
+    }
+
     // Verify token vault
     if pool.token_vault != *token_vault_info.key {
         return Err(StakingError::InvalidTokenVault.into());
@@ -74,6 +79,13 @@ pub fn process_complete_unstake(
     }
     if user_stake.pool != *pool_info.key {
         return Err(StakingError::InvalidPool.into());
+    }
+
+    // Verify user stake PDA
+    let (expected_stake, _) =
+        UserStake::derive_pda(pool_info.key, user_info.key, program_id);
+    if *user_stake_info.key != expected_stake {
+        return Err(StakingError::InvalidPDA.into());
     }
 
     // Check there is a pending request

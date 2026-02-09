@@ -77,6 +77,11 @@ function deriveUserStakePDA(pool: PublicKey, user: PublicKey): [PublicKey, numbe
   );
 }
 
+async function airdropAndConfirm(connection: Connection, publicKey: PublicKey, lamports: number): Promise<void> {
+  const sig = await connection.requestAirdrop(publicKey, lamports);
+  await connection.confirmTransaction(sig);
+}
+
 // Instruction builders
 function createInitializePoolInstruction(
   pool: PublicKey,
@@ -648,8 +653,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(2592000));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     const stakeAmount = BigInt(1_000_000_000);
@@ -672,9 +676,8 @@ async function runTests() {
 
     const user1 = Keypair.generate();
     const user2 = Keypair.generate();
-    await connection.requestAirdrop(user1.publicKey, LAMPORTS_PER_SOL);
-    await connection.requestAirdrop(user2.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user1.publicKey, LAMPORTS_PER_SOL);
+    await airdropAndConfirm(connection, user2.publicKey, LAMPORTS_PER_SOL);
 
     const user1Token = await ctx.createUserTokenAccount(user1.publicKey);
     const user2Token = await ctx.createUserTokenAccount(user2.publicKey);
@@ -699,8 +702,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(100)); // Short tau
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
@@ -726,8 +728,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(2592000));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
@@ -750,8 +751,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(2592000));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
@@ -772,8 +772,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(100));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
@@ -800,8 +799,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(2592000));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(2_000_000_000));
@@ -853,14 +851,17 @@ async function runTests() {
     await ctx.initializePool(BigInt(2592000));
 
     const wrongAuth = Keypair.generate();
-    await connection.requestAirdrop(wrongAuth.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, wrongAuth.publicKey, LAMPORTS_PER_SOL);
 
     let failed = false;
     try {
       await ctx.updatePoolSettings(wrongAuth, BigInt(100), null, null);
     } catch (e) {
       failed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x6')) {
+        throw new Error(`Expected InvalidAuthority (0x6), got: ${errMsg}`);
+      }
     }
     if (!failed) throw new Error('Should reject wrong authority');
   });
@@ -873,8 +874,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(2592000));
 
     const newAuth = Keypair.generate();
-    await connection.requestAirdrop(newAuth.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, newAuth.publicKey, LAMPORTS_PER_SOL);
 
     // Transfer authority
     await ctx.transferAuthority(ctx.payer, newAuth.publicKey);
@@ -885,6 +885,10 @@ async function runTests() {
       await ctx.updatePoolSettings(ctx.payer, BigInt(100), null, null);
     } catch (e) {
       oldFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x6')) {
+        throw new Error(`Expected InvalidAuthority (0x6), got: ${errMsg}`);
+      }
     }
     if (!oldFailed) throw new Error('Old authority should be rejected');
 
@@ -908,6 +912,10 @@ async function runTests() {
       await ctx.updatePoolSettings(ctx.payer, BigInt(100), null, null);
     } catch (e) {
       failed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x1b')) {
+        throw new Error(`Expected AuthorityRenounced (0x1b), got: ${errMsg}`);
+      }
     }
     if (!failed) throw new Error('Renounced authority should be rejected');
   });
@@ -923,8 +931,7 @@ async function runTests() {
     await ctx.updatePoolSettings(ctx.payer, BigInt(1_000_000_000), null, null);
 
     const user = Keypair.generate();
-    const airdropSig = await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await connection.confirmTransaction(airdropSig);
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(2_000_000_000));
 
@@ -934,6 +941,10 @@ async function runTests() {
       await ctx.stake(user, userToken, BigInt(500_000_000));
     } catch (e) {
       belowMinFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x15')) {
+        throw new Error(`Expected BelowMinimumStake (0x15), got: ${errMsg}`);
+      }
     }
     if (!belowMinFailed) throw new Error('Below-minimum stake should fail');
 
@@ -952,8 +963,7 @@ async function runTests() {
     await ctx.updatePoolSettings(ctx.payer, null, BigInt(10), null);
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
     await ctx.stake(user, userToken, BigInt(1_000_000_000));
@@ -964,6 +974,10 @@ async function runTests() {
       await ctx.unstake(user, userToken, BigInt(1_000_000_000));
     } catch (e) {
       lockedFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x16')) {
+        throw new Error(`Expected StakeLocked (0x16), got: ${errMsg}`);
+      }
     }
     if (!lockedFailed) throw new Error('Should reject unstake during lock period');
 
@@ -986,8 +1000,7 @@ async function runTests() {
     await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(5));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
     await ctx.stake(user, userToken, BigInt(1_000_000_000));
@@ -998,6 +1011,10 @@ async function runTests() {
       await ctx.unstake(user, userToken, BigInt(1_000_000_000));
     } catch (e) {
       directFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x18')) {
+        throw new Error(`Expected CooldownRequired (0x18), got: ${errMsg}`);
+      }
     }
     if (!directFailed) throw new Error('Direct unstake should fail with cooldown');
 
@@ -1010,6 +1027,10 @@ async function runTests() {
       await ctx.completeUnstake(user, userToken);
     } catch (e) {
       earlyFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x17')) {
+        throw new Error(`Expected CooldownNotElapsed (0x17), got: ${errMsg}`);
+      }
     }
     if (!earlyFailed) throw new Error('Complete unstake should fail before cooldown');
 
@@ -1037,8 +1058,7 @@ async function runTests() {
     await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(60));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
     await ctx.stake(user, userToken, BigInt(1_000_000_000));
@@ -1055,6 +1075,10 @@ async function runTests() {
       await ctx.cancelUnstakeRequest(user);
     } catch (e) {
       doubleCancelFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x19')) {
+        throw new Error(`Expected NoPendingUnstakeRequest (0x19), got: ${errMsg}`);
+      }
     }
     if (!doubleCancelFailed) throw new Error('Double cancel should fail');
   });
@@ -1070,8 +1094,7 @@ async function runTests() {
     await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(60));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(2_000_000_000));
     await ctx.stake(user, userToken, BigInt(1_000_000_000));
@@ -1085,6 +1108,10 @@ async function runTests() {
       await ctx.stake(user, userToken, BigInt(500_000_000));
     } catch (e) {
       stakeFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x1a')) {
+        throw new Error(`Expected PendingUnstakeRequestExists (0x1a), got: ${errMsg}`);
+      }
     }
     if (!stakeFailed) throw new Error('Should not stake while unstake pending');
 
@@ -1103,8 +1130,7 @@ async function runTests() {
     await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(60));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
     await ctx.stake(user, userToken, BigInt(1_000_000_000));
@@ -1118,6 +1144,10 @@ async function runTests() {
       await ctx.requestUnstake(user, BigInt(500_000_000));
     } catch (e) {
       doubleRequestFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x1a')) {
+        throw new Error(`Expected PendingUnstakeRequestExists (0x1a), got: ${errMsg}`);
+      }
     }
     if (!doubleRequestFailed) throw new Error('Double request should fail');
   });
@@ -1131,8 +1161,7 @@ async function runTests() {
 
     // With default settings (all zeros), everything should work as before
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
 
@@ -1163,8 +1192,7 @@ async function runTests() {
 
     // Old staker stakes first and waits to get max weight
     const oldStaker = Keypair.generate();
-    await connection.requestAirdrop(oldStaker.publicKey, 3 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, oldStaker.publicKey, 3 * LAMPORTS_PER_SOL);
     const oldToken = await ctx.createUserTokenAccount(oldStaker.publicKey);
     await ctx.mintTokens(oldToken, BigInt(1_000_000_000));
     await ctx.stake(oldStaker, oldToken, BigInt(1_000_000_000));
@@ -1175,8 +1203,7 @@ async function runTests() {
 
     // New staker joins - starts with ~0% weight
     const newStaker = Keypair.generate();
-    await connection.requestAirdrop(newStaker.publicKey, 3 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, newStaker.publicKey, 3 * LAMPORTS_PER_SOL);
     const newToken = await ctx.createUserTokenAccount(newStaker.publicKey);
     await ctx.mintTokens(newToken, BigInt(1_000_000_000));
     await ctx.stake(newStaker, newToken, BigInt(1_000_000_000));
@@ -1236,8 +1263,7 @@ async function runTests() {
 
     // Old staker stakes first
     const oldStaker = Keypair.generate();
-    await connection.requestAirdrop(oldStaker.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, oldStaker.publicKey, 2 * LAMPORTS_PER_SOL);
     const oldToken = await ctx.createUserTokenAccount(oldStaker.publicKey);
     const stakeAmount = BigInt(1_000_000_000);
     await ctx.mintTokens(oldToken, stakeAmount);
@@ -1249,8 +1275,7 @@ async function runTests() {
 
     // New staker stakes now (will have ~0% weight)
     const newStaker = Keypair.generate();
-    await connection.requestAirdrop(newStaker.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, newStaker.publicKey, 2 * LAMPORTS_PER_SOL);
     const newToken = await ctx.createUserTokenAccount(newStaker.publicKey);
     await ctx.mintTokens(newToken, stakeAmount);
     await ctx.stake(newStaker, newToken, stakeAmount);
@@ -1307,9 +1332,8 @@ async function runTests() {
     // Two stakers stake same amount
     const staker1 = Keypair.generate();
     const staker2 = Keypair.generate();
-    await connection.requestAirdrop(staker1.publicKey, 2 * LAMPORTS_PER_SOL);
-    await connection.requestAirdrop(staker2.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, staker1.publicKey, 2 * LAMPORTS_PER_SOL);
+    await airdropAndConfirm(connection, staker2.publicKey, 2 * LAMPORTS_PER_SOL);
 
     const token1 = await ctx.createUserTokenAccount(staker1.publicKey);
     const token2 = await ctx.createUserTokenAccount(staker2.publicKey);
@@ -1368,9 +1392,8 @@ async function runTests() {
     // Staker 2: stakes 2 tokens
     const staker1 = Keypair.generate();
     const staker2 = Keypair.generate();
-    await connection.requestAirdrop(staker1.publicKey, 2 * LAMPORTS_PER_SOL);
-    await connection.requestAirdrop(staker2.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, staker1.publicKey, 2 * LAMPORTS_PER_SOL);
+    await airdropAndConfirm(connection, staker2.publicKey, 2 * LAMPORTS_PER_SOL);
 
     const token1 = await ctx.createUserTokenAccount(staker1.publicKey);
     const token2 = await ctx.createUserTokenAccount(staker2.publicKey);
@@ -1424,8 +1447,7 @@ async function runTests() {
 
     // Old staker stakes and waits 5τ (essentially 100% weight)
     const oldStaker = Keypair.generate();
-    await connection.requestAirdrop(oldStaker.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, oldStaker.publicKey, 2 * LAMPORTS_PER_SOL);
     const oldToken = await ctx.createUserTokenAccount(oldStaker.publicKey);
     await ctx.mintTokens(oldToken, BigInt(1_000_000_000));
     await ctx.stake(oldStaker, oldToken, BigInt(1_000_000_000));
@@ -1436,8 +1458,7 @@ async function runTests() {
 
     // New staker stakes same amount
     const newStaker = Keypair.generate();
-    await connection.requestAirdrop(newStaker.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, newStaker.publicKey, 2 * LAMPORTS_PER_SOL);
     const newToken = await ctx.createUserTokenAccount(newStaker.publicKey);
     await ctx.mintTokens(newToken, BigInt(1_000_000_000));
     await ctx.stake(newStaker, newToken, BigInt(1_000_000_000));
@@ -1497,8 +1518,7 @@ async function runTests() {
 
     // Honest staker: 2 tokens in one account
     const honest = Keypair.generate();
-    await connection.requestAirdrop(honest.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, honest.publicKey, 2 * LAMPORTS_PER_SOL);
     const honestToken = await ctx.createUserTokenAccount(honest.publicKey);
     await ctx.mintTokens(honestToken, BigInt(2_000_000_000));
     await ctx.stake(honest, honestToken, BigInt(2_000_000_000));
@@ -1506,9 +1526,8 @@ async function runTests() {
     // Sybil attacker: 2 tokens split across 2 accounts (1 each)
     const sybil1 = Keypair.generate();
     const sybil2 = Keypair.generate();
-    await connection.requestAirdrop(sybil1.publicKey, 2 * LAMPORTS_PER_SOL);
-    await connection.requestAirdrop(sybil2.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, sybil1.publicKey, 2 * LAMPORTS_PER_SOL);
+    await airdropAndConfirm(connection, sybil2.publicKey, 2 * LAMPORTS_PER_SOL);
     const sybil1Token = await ctx.createUserTokenAccount(sybil1.publicKey);
     const sybil2Token = await ctx.createUserTokenAccount(sybil2.publicKey);
     await ctx.mintTokens(sybil1Token, BigInt(1_000_000_000));
@@ -1562,8 +1581,7 @@ async function runTests() {
 
     // Honest staker stakes early
     const honest = Keypair.generate();
-    await connection.requestAirdrop(honest.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, honest.publicKey, 2 * LAMPORTS_PER_SOL);
     const honestToken = await ctx.createUserTokenAccount(honest.publicKey);
     await ctx.mintTokens(honestToken, BigInt(1_000_000_000));
     await ctx.stake(honest, honestToken, BigInt(1_000_000_000));
@@ -1574,8 +1592,7 @@ async function runTests() {
 
     // Attacker stakes right before deposit (flash stake)
     const attacker = Keypair.generate();
-    await connection.requestAirdrop(attacker.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, attacker.publicKey, 2 * LAMPORTS_PER_SOL);
     const attackerToken = await ctx.createUserTokenAccount(attacker.publicKey);
     await ctx.mintTokens(attackerToken, BigInt(1_000_000_000));
     await ctx.stake(attacker, attackerToken, BigInt(1_000_000_000));
@@ -1618,8 +1635,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(100));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, 2 * LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
     await ctx.stake(user, userToken, BigInt(1_000_000_000));
@@ -1646,8 +1662,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(10));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, 2 * LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
     await ctx.stake(user, userToken, BigInt(1_000_000_000));
@@ -1671,7 +1686,10 @@ async function runTests() {
       await ctx.claimRewards(user);
     } catch (e: any) {
       failed = true;
-      console.log(`    Correctly rejected claim after unstake`);
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0xe')) {
+        throw new Error(`Expected ZeroAmount (0xe), got: ${errMsg}`);
+      }
     }
 
     if (!failed) {
@@ -1687,8 +1705,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(10));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, 2 * LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
     await ctx.stake(user, userToken, BigInt(1_000_000_000));
@@ -1729,16 +1746,14 @@ async function runTests() {
 
     // Honest staker - stakes and holds
     const honest = Keypair.generate();
-    await connection.requestAirdrop(honest.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, honest.publicKey, 2 * LAMPORTS_PER_SOL);
     const honestToken = await ctx.createUserTokenAccount(honest.publicKey);
     await ctx.mintTokens(honestToken, BigInt(1_000_000_000));
     await ctx.stake(honest, honestToken, BigInt(1_000_000_000));
 
     // Cycler - stakes, waits, unstakes, restakes (trying to game)
     const cycler = Keypair.generate();
-    await connection.requestAirdrop(cycler.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, cycler.publicKey, 2 * LAMPORTS_PER_SOL);
     const cyclerToken = await ctx.createUserTokenAccount(cycler.publicKey);
     await ctx.mintTokens(cyclerToken, BigInt(1_000_000_000));
     await ctx.stake(cycler, cyclerToken, BigInt(1_000_000_000));
@@ -1784,8 +1799,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(100));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, 2 * LAMPORTS_PER_SOL);
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
 
@@ -1795,6 +1809,10 @@ async function runTests() {
       await ctx.stake(user, userToken, BigInt(0));
     } catch (e) {
       zeroStakeFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0xe')) {
+        throw new Error(`Expected ZeroAmount (0xe), got: ${errMsg}`);
+      }
     }
 
     // Stake normally first
@@ -1806,6 +1824,10 @@ async function runTests() {
       await ctx.unstake(user, userToken, BigInt(0));
     } catch (e) {
       zeroUnstakeFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0xe')) {
+        throw new Error(`Expected ZeroAmount (0xe), got: ${errMsg}`);
+      }
     }
 
     // Try zero deposit
@@ -1814,14 +1836,24 @@ async function runTests() {
       await ctx.depositRewards(BigInt(0));
     } catch (e) {
       zeroDepositFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0xe')) {
+        throw new Error(`Expected ZeroAmount (0xe), got: ${errMsg}`);
+      }
     }
 
     console.log(`    Zero stake rejected: ${zeroStakeFailed}`);
     console.log(`    Zero unstake rejected: ${zeroUnstakeFailed}`);
     console.log(`    Zero deposit rejected: ${zeroDepositFailed}`);
 
-    if (!zeroStakeFailed || !zeroUnstakeFailed || !zeroDepositFailed) {
-      throw new Error('Zero amount operations should be rejected');
+    if (!zeroStakeFailed) {
+      throw new Error('Zero stake should be rejected');
+    }
+    if (!zeroUnstakeFailed) {
+      throw new Error('Zero unstake should be rejected');
+    }
+    if (!zeroDepositFailed) {
+      throw new Error('Zero deposit should be rejected');
     }
   });
 
@@ -1838,8 +1870,7 @@ async function runTests() {
 
     // Honest staker
     const honest = Keypair.generate();
-    await connection.requestAirdrop(honest.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, honest.publicKey, 2 * LAMPORTS_PER_SOL);
     const honestToken = await ctx.createUserTokenAccount(honest.publicKey);
     await ctx.mintTokens(honestToken, BigInt(1_000_000_000));
     await ctx.stake(honest, honestToken, BigInt(1_000_000_000));
@@ -1850,8 +1881,7 @@ async function runTests() {
 
     // Frontrunner stakes equal amount right before deposit
     const attacker = Keypair.generate();
-    await connection.requestAirdrop(attacker.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, attacker.publicKey, 2 * LAMPORTS_PER_SOL);
     const attackerToken = await ctx.createUserTokenAccount(attacker.publicKey);
     await ctx.mintTokens(attackerToken, BigInt(1_000_000_000));
     await ctx.stake(attacker, attackerToken, BigInt(1_000_000_000));
@@ -1897,8 +1927,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(5)); // Short tau
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, 2 * LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
@@ -1926,7 +1955,7 @@ async function runTests() {
 
     // Claimed should be <= depositAmount (accounting for tx fees and weight < 100%)
     // If double-counted, claimed would be close to 2x depositAmount
-    if (claimed > depositAmount + BigInt(10000)) {
+    if (claimed > depositAmount + BigInt(6000)) {
       throw new Error(`Double-counting detected! Claimed ${claimed} > deposited ${depositAmount}`);
     }
   });
@@ -1939,8 +1968,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(5)); // Short tau
 
     const attacker = Keypair.generate();
-    await connection.requestAirdrop(attacker.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, attacker.publicKey, 2 * LAMPORTS_PER_SOL);
 
     const attackerToken = await ctx.createUserTokenAccount(attacker.publicKey);
     const smallStake = BigInt(1_000); // tiny initial stake
@@ -1980,7 +2008,7 @@ async function runTests() {
     // A reasonable upper bound: all rewards (since they were the only staker).
     // But claimed should NOT be inflated by the large stake addition.
     // The key check: claimed should be roughly proportional to the deposit, not vastly more.
-    if (claimed > depositAmount + BigInt(10000)) {
+    if (claimed > depositAmount + BigInt(6000)) {
       throw new Error(`Reward theft detected! Claimed ${claimed} >> deposited ${depositAmount}`);
     }
   });
@@ -1993,8 +2021,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(5)); // Short tau
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, 3 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, 3 * LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
@@ -2038,8 +2065,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(5)); // Short tau
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, 3 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, 3 * LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(2_000_000_000));
@@ -2093,8 +2119,7 @@ async function runTests() {
     // First, create a "whale" that represents aggregate of ~1M stakers
     // 1M stakers × 1000 tokens × 10^9 decimals = 10^18 raw tokens
     const whale = Keypair.generate();
-    await connection.requestAirdrop(whale.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, whale.publicKey, 2 * LAMPORTS_PER_SOL);
 
     const whaleToken = await ctx.createUserTokenAccount(whale.publicKey);
     // Mint a large amount representing aggregate stake
@@ -2109,8 +2134,7 @@ async function runTests() {
 
     // Now test a regular user staking against this large pool
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     const userAmount = BigInt(1_000_000_000); // 1 token (normal stake)
@@ -2137,8 +2161,7 @@ async function runTests() {
 
     // Create large aggregate stake
     const whale = Keypair.generate();
-    await connection.requestAirdrop(whale.publicKey, 5 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, whale.publicKey, 5 * LAMPORTS_PER_SOL);
 
     const whaleToken = await ctx.createUserTokenAccount(whale.publicKey);
     const largeAmount = BigInt('1000000000000000'); // 10^15
@@ -2164,8 +2187,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(10)); // Very short tau
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     const stakeAmount = BigInt('100000000000000'); // 10^14
@@ -2195,8 +2217,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(2592000));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     const largeAmount = BigInt('500000000000000'); // 5×10^14
@@ -2230,8 +2251,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(50)); // Short tau
 
     const whale = Keypair.generate();
-    await connection.requestAirdrop(whale.publicKey, 3 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, whale.publicKey, 3 * LAMPORTS_PER_SOL);
 
     const whaleToken = await ctx.createUserTokenAccount(whale.publicKey);
     const largeAmount = BigInt('1000000000000000');
@@ -2258,8 +2278,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(10)); // Short tau for weight
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, 5 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, 5 * LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt('10000000000000')); // 10^13
@@ -2312,8 +2331,7 @@ async function runTests() {
     await ctx.initializePool(BigInt(100));
 
     const user = Keypair.generate();
-    await connection.requestAirdrop(user.publicKey, 2 * LAMPORTS_PER_SOL);
-    await new Promise(r => setTimeout(r, 500));
+    await airdropAndConfirm(connection, user.publicKey, 2 * LAMPORTS_PER_SOL);
 
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt('1000000000000000'));

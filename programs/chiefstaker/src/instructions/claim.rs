@@ -64,6 +64,13 @@ pub fn process_claim_rewards(
         return Err(StakingError::InvalidPool.into());
     }
 
+    // Verify user stake PDA
+    let (expected_stake, _) =
+        UserStake::derive_pda(pool_info.key, user_info.key, program_id);
+    if *user_stake_info.key != expected_stake {
+        return Err(StakingError::InvalidPDA.into());
+    }
+
     // Check user has a stake
     if user_stake.amount == 0 {
         return Err(StakingError::ZeroAmount.into());

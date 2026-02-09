@@ -28,7 +28,8 @@ pub struct StakingPool {
     /// PDA holding staked tokens
     pub token_vault: Pubkey,
 
-    /// PDA holding SOL rewards (this is the pool PDA itself, uses lamports)
+    /// DEPRECATED: No longer used (pool PDA holds SOL directly via lamports).
+    /// Retained for Borsh serialization layout compatibility.
     pub reward_vault: Pubkey,
 
     /// Admin authority who initialized the pool

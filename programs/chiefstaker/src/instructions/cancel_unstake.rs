@@ -60,6 +60,13 @@ pub fn process_cancel_unstake_request(
         return Err(StakingError::InvalidPool.into());
     }
 
+    // Verify user stake PDA
+    let (expected_stake, _) =
+        UserStake::derive_pda(pool_info.key, user_info.key, program_id);
+    if *user_stake_info.key != expected_stake {
+        return Err(StakingError::InvalidPDA.into());
+    }
+
     // Check there is a pending request
     if !user_stake.has_pending_unstake_request() {
         return Err(StakingError::NoPendingUnstakeRequest.into());

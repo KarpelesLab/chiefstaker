@@ -50,6 +50,11 @@ pub fn process_request_unstake(
         return Err(StakingError::NotInitialized.into());
     }
 
+    // Require cooldown to be configured; otherwise use direct Unstake
+    if pool.unstake_cooldown_seconds == 0 {
+        return Err(StakingError::CooldownNotConfigured.into());
+    }
+
     // Load and validate user stake
     if user_stake_info.owner != program_id {
         return Err(StakingError::InvalidAccountOwner.into());
@@ -65,6 +70,13 @@ pub fn process_request_unstake(
     }
     if user_stake.pool != *pool_info.key {
         return Err(StakingError::InvalidPool.into());
+    }
+
+    // Verify user stake PDA
+    let (expected_stake, _) =
+        UserStake::derive_pda(pool_info.key, user_info.key, program_id);
+    if *user_stake_info.key != expected_stake {
+        return Err(StakingError::InvalidPDA.into());
     }
 
     // Check no existing pending request
