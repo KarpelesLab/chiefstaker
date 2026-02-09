@@ -114,6 +114,9 @@ pub fn process_stake(
     // Create or update user stake account
     let is_new_stake = user_stake_info.data_is_empty();
 
+    // Deferred auto-claim amount (set in else branch, transferred after token CPI)
+    let mut auto_claim_transfer: u64 = 0;
+
     if is_new_stake {
         // Check minimum stake amount
         if pool.min_stake_amount > 0 && amount < pool.min_stake_amount {
@@ -208,6 +211,8 @@ pub fn process_stake(
 
         // Auto-claim pending rewards before resetting reward_debt.
         // Track any unpaid portion so it remains claimable after the stake update.
+        // NOTE: Actual SOL transfer is deferred until after the token CPI to avoid
+        // Solana's CPI balance check failure (same pattern as execute_unstake).
         let mut unpaid_rewards_wad: u128 = 0;
         let user_weighted_before = calculate_user_weighted_stake(
             user_stake.amount,
@@ -225,16 +230,13 @@ pub fn process_stake(
                     let rent = Rent::get()?;
                     let rent_exempt_minimum = rent.minimum_balance(pool_info.data_len());
                     let available = pool_info.lamports().saturating_sub(rent_exempt_minimum);
-                    let transfer = pending_lamports.min(available as u128) as u64;
-                    if transfer > 0 {
-                        **pool_info.try_borrow_mut_lamports()? -= transfer;
-                        **user_info.try_borrow_mut_lamports()? += transfer;
+                    auto_claim_transfer = pending_lamports.min(available as u128) as u64;
+                    if auto_claim_transfer > 0 {
                         pool.last_synced_lamports =
-                            pool.last_synced_lamports.saturating_sub(transfer);
-                        msg!("Auto-claimed {} lamports in pending rewards", transfer);
+                            pool.last_synced_lamports.saturating_sub(auto_claim_transfer);
                     }
                     // Track unpaid portion so it remains claimable
-                    let paid_wad = (transfer as u128)
+                    let paid_wad = (auto_claim_transfer as u128)
                         .checked_mul(WAD)
                         .ok_or(StakingError::MathOverflow)?;
                     unpaid_rewards_wad = pending.saturating_sub(paid_wad);
@@ -329,6 +331,13 @@ pub fn process_stake(
             user_info.clone(),
         ],
     )?;
+
+    // Transfer auto-claimed SOL rewards AFTER token CPI to avoid balance check failure
+    if auto_claim_transfer > 0 {
+        **pool_info.try_borrow_mut_lamports()? -= auto_claim_transfer;
+        **user_info.try_borrow_mut_lamports()? += auto_claim_transfer;
+        msg!("Auto-claimed {} lamports in pending rewards", auto_claim_transfer);
+    }
 
     msg!("Staked {} tokens", amount);
 
