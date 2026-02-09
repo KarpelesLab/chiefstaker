@@ -84,6 +84,9 @@ pub fn process_request_unstake(
         return Err(StakingError::PendingUnstakeRequestExists.into());
     }
 
+    // Lazily adjust exp_start_factor if pool has been rebased
+    user_stake.sync_to_pool(&pool)?;
+
     // Check sufficient balance
     if user_stake.amount < amount {
         return Err(StakingError::InsufficientStakeBalance.into());

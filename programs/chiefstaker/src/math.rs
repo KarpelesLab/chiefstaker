@@ -165,11 +165,23 @@ fn exp_taylor(x: u128) -> Result<u128, StakingError> {
     Ok(result)
 }
 
+/// Threshold above which e^(-x) rounds to 0 at WAD precision.
+/// e^(-42) ≈ 5.75e-19, which is < 1/WAD, so WAD * e^(-42) < 1 and truncates to 0.
+/// This also avoids calling exp_wad with values that overflow its u128 intermediates
+/// (exp_wad overflows around x ≈ 48 WAD due to `2^int_part * WAD` exceeding u128).
+pub const EXP_NEG_ZERO_THRESHOLD: u128 = 42_000_000_000_000_000_000; // 42 * WAD
+
 /// Calculate e^(-x) where x is WAD-scaled
 /// Uses e^(-x) = 1/e^x
+/// For large x (>= EXP_NEG_ZERO_THRESHOLD), returns 0 since the result is below WAD precision
 pub fn exp_neg_wad(x: u128) -> Result<u128, StakingError> {
     if x == 0 {
         return Ok(WAD);
+    }
+
+    // For large x, e^(-x) rounds to 0 at WAD (10^18) precision
+    if x >= EXP_NEG_ZERO_THRESHOLD {
+        return Ok(0);
     }
 
     let exp_x = exp_wad(x)?;
@@ -359,6 +371,55 @@ mod tests {
         let large_available: u64 = 500_000_000;
         let result = small_pending.min(large_available as u128) as u64;
         assert_eq!(result, 100_000);
+    }
+
+    #[test]
+    fn test_exp_neg_large_input_returns_zero() {
+        // e^(-100) is effectively 0 at WAD precision
+        let result = exp_neg_wad(100 * WAD).unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_exp_neg_at_threshold_boundary() {
+        // Just below threshold should still compute (result is 0 or 1)
+        let result = exp_neg_wad(EXP_NEG_ZERO_THRESHOLD - WAD).unwrap();
+        // e^(-41) ≈ 1.56e-18, which at WAD scale is ~1-2
+        assert!(result <= 2, "exp_neg(-41) should be 0 or 1 at WAD precision, got {}", result);
+    }
+
+    #[test]
+    fn test_exp_neg_at_threshold() {
+        // At threshold should return 0
+        let result = exp_neg_wad(EXP_NEG_ZERO_THRESHOLD).unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_exp_neg_just_above_threshold() {
+        // Above threshold should return 0 (not error)
+        let result = exp_neg_wad(EXP_NEG_ZERO_THRESHOLD + WAD).unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_exp_neg_time_ratio_large_age() {
+        // Pool running for 100*tau should not fail
+        let tau = 2_592_000u64; // 30 days
+        let age = 100 * tau as i64;
+        let result = exp_neg_time_ratio(age, tau).unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_calculate_weight_large_age() {
+        // Weight should be fully matured (amount * WAD) for very old stakes
+        let tau = 2_592_000u64;
+        let amount = 1_000_000u64;
+        let age = 100 * tau as i64;
+        let weight = calculate_weight(amount, age, tau).unwrap();
+        let max_weight = (amount as u128) * WAD;
+        assert_eq!(weight, max_weight, "Weight should be fully matured for age >> tau");
     }
 
     #[test]

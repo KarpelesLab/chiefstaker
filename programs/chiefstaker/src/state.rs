@@ -3,7 +3,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::pubkey::Pubkey;
 
-use crate::math::U256;
+use crate::error::StakingError;
+use crate::math::{exp_neg_time_ratio, wad_mul, U256};
 
 /// Seed prefixes for PDAs
 pub const POOL_SEED: &[u8] = b"pool";
@@ -70,8 +71,12 @@ pub struct StakingPool {
     /// Unstake cooldown period in seconds (0 = direct unstake, >0 = requires RequestUnstake flow)
     pub unstake_cooldown_seconds: u64,
 
+    /// Original base_time before first rebase (0 = no rebase has occurred).
+    /// Used to lazily adjust legacy UserStake.exp_start_factor after rebase.
+    pub initial_base_time: i64,
+
     /// Reserved space for future upgrades
-    pub _reserved2: [u8; 32],
+    pub _reserved3: [u8; 24],
 }
 
 impl StakingPool {
@@ -92,7 +97,8 @@ impl StakingPool {
         8 +  // min_stake_amount
         8 +  // lock_duration_seconds
         8 +  // unstake_cooldown_seconds
-        32;  // _reserved2
+        8 +  // initial_base_time
+        24;  // _reserved3
 
     /// Create a new staking pool
     pub fn new(
@@ -121,7 +127,8 @@ impl StakingPool {
             min_stake_amount: 0,
             lock_duration_seconds: 0,
             unstake_cooldown_seconds: 0,
-            _reserved2: [0u8; 32],
+            initial_base_time: 0,
+            _reserved3: [0u8; 24],
         }
     }
 
@@ -197,8 +204,10 @@ pub struct UserStake {
     /// Falls back to stake_time when 0 (for existing accounts)
     pub last_stake_time: i64,
 
-    /// Reserved space for future upgrades
-    pub _reserved2: [u8; 8],
+    /// Pool base_time when exp_start_factor was last calibrated.
+    /// 0 = legacy account (pre-rebase-aware); treated as matching the pool's
+    /// initial_base_time or current base_time if no rebase has occurred.
+    pub base_time_snapshot: i64,
 }
 
 impl UserStake {
@@ -214,7 +223,7 @@ impl UserStake {
         8 +  // unstake_request_amount
         8 +  // unstake_request_time
         8 +  // last_stake_time
-        8;   // _reserved2
+        8;   // base_time_snapshot
 
     /// Create a new user stake
     pub fn new(
@@ -224,6 +233,7 @@ impl UserStake {
         stake_time: i64,
         exp_start_factor: u128,
         bump: u8,
+        base_time_snapshot: i64,
     ) -> Self {
         Self {
             discriminator: USER_STAKE_DISCRIMINATOR,
@@ -237,7 +247,7 @@ impl UserStake {
             unstake_request_amount: 0,
             unstake_request_time: 0,
             last_stake_time: stake_time,
-            _reserved2: [0u8; 8],
+            base_time_snapshot,
         }
     }
 
@@ -263,6 +273,42 @@ impl UserStake {
     /// Check if there is a pending unstake request
     pub fn has_pending_unstake_request(&self) -> bool {
         self.unstake_request_amount > 0
+    }
+
+    /// Lazily adjust exp_start_factor when pool has been rebased.
+    /// Must be called before any calculation that uses exp_start_factor.
+    /// Returns true if an adjustment was made.
+    pub fn sync_to_pool(&mut self, pool: &StakingPool) -> Result<bool, StakingError> {
+        if self.base_time_snapshot == pool.base_time {
+            return Ok(false);
+        }
+
+        if self.base_time_snapshot == 0 {
+            // Legacy account (created before rebase-aware upgrade)
+            if pool.initial_base_time == 0 {
+                // No rebase has occurred since upgrade — exp_start_factor is still
+                // relative to the current pool.base_time, so no adjustment needed.
+                self.base_time_snapshot = pool.base_time;
+                return Ok(true);
+            }
+            // A rebase has occurred — adjust from the original base_time
+            let delta = pool.base_time.saturating_sub(pool.initial_base_time);
+            if delta > 0 {
+                let adjustment = exp_neg_time_ratio(delta, pool.tau_seconds)?;
+                self.exp_start_factor = wad_mul(self.exp_start_factor, adjustment)?;
+            }
+            self.base_time_snapshot = pool.base_time;
+            return Ok(true);
+        }
+
+        // Standard case: adjust from the snapshot's base_time to the current one
+        let delta = pool.base_time.saturating_sub(self.base_time_snapshot);
+        if delta > 0 {
+            let adjustment = exp_neg_time_ratio(delta, pool.tau_seconds)?;
+            self.exp_start_factor = wad_mul(self.exp_start_factor, adjustment)?;
+        }
+        self.base_time_snapshot = pool.base_time;
+        Ok(true)
     }
 }
 
@@ -295,6 +341,7 @@ mod tests {
             12345,
             1_000_000_000_000_000_000,
             255,
+            12345,
         );
         let serialized = borsh::to_vec(&stake).unwrap();
         assert_eq!(serialized.len(), UserStake::LEN);

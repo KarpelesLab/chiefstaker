@@ -76,6 +76,9 @@ pub fn process_claim_rewards(
         return Err(StakingError::ZeroAmount.into());
     }
 
+    // Lazily adjust exp_start_factor if pool has been rebased
+    user_stake.sync_to_pool(&pool)?;
+
     let clock = Clock::get()?;
     let current_time = clock.unix_timestamp;
 

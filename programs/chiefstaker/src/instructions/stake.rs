@@ -137,6 +137,7 @@ pub fn process_stake(
             current_time,
             exp_start_factor,
             stake_bump,
+            pool.base_time,
         );
 
         let mut stake_data = user_stake_info.try_borrow_mut_data()?;
@@ -183,6 +184,38 @@ pub fn process_stake(
             .ok_or(StakingError::MathOverflow)?;
         if pool.min_stake_amount > 0 && new_total < pool.min_stake_amount {
             return Err(StakingError::BelowMinimumStake.into());
+        }
+
+        // Lazily adjust exp_start_factor if pool has been rebased
+        user_stake.sync_to_pool(&pool)?;
+
+        // Auto-claim pending rewards before resetting reward_debt
+        let user_weighted_before = calculate_user_weighted_stake(
+            user_stake.amount,
+            user_stake.exp_start_factor,
+            current_time,
+            pool.base_time,
+            pool.tau_seconds,
+        )?;
+        if user_weighted_before > 0 && pool.acc_reward_per_weighted_share > 0 {
+            let accumulated = wad_mul(user_weighted_before, pool.acc_reward_per_weighted_share)?;
+            let pending = accumulated.saturating_sub(user_stake.reward_debt);
+            if pending > 0 {
+                let pending_lamports = pending / WAD;
+                if pending_lamports > 0 {
+                    let rent = Rent::get()?;
+                    let rent_exempt_minimum = rent.minimum_balance(pool_info.data_len());
+                    let available = pool_info.lamports().saturating_sub(rent_exempt_minimum);
+                    let transfer = pending_lamports.min(available as u128) as u64;
+                    if transfer > 0 {
+                        **pool_info.try_borrow_mut_lamports()? -= transfer;
+                        **user_info.try_borrow_mut_lamports()? += transfer;
+                        pool.last_synced_lamports =
+                            pool.last_synced_lamports.saturating_sub(transfer);
+                        msg!("Auto-claimed {} lamports in pending rewards", transfer);
+                    }
+                }
+            }
         }
 
         // For additional stakes, we need to track a weighted average exp_start_factor

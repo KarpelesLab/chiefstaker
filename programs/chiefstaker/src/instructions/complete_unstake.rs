@@ -101,6 +101,9 @@ pub fn process_complete_unstake(
         return Err(StakingError::CooldownNotElapsed.into());
     }
 
+    // Lazily adjust exp_start_factor if pool has been rebased
+    user_stake.sync_to_pool(&pool)?;
+
     let amount = user_stake.unstake_request_amount;
 
     // Clear the request fields before execute_unstake (which serializes)

@@ -267,6 +267,9 @@ pub fn process_unstake(
         return Err(StakingError::PendingUnstakeRequestExists.into());
     }
 
+    // Lazily adjust exp_start_factor if pool has been rebased
+    user_stake.sync_to_pool(&pool)?;
+
     // Check lock duration
     if pool.lock_duration_seconds > 0 {
         let clock = Clock::get()?;

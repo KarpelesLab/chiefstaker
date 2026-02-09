@@ -43,13 +43,6 @@ pub fn process_sync_pool(
     let clock = Clock::get()?;
     let current_time = clock.unix_timestamp;
 
-    // Check if rebasing is needed
-    let sum_stake_exp = pool.get_sum_stake_exp();
-    if !sum_stake_exp.needs_rebase() {
-        msg!("Pool does not need sync");
-        return Ok(());
-    }
-
     // Calculate time delta since base_time
     let time_delta = current_time.saturating_sub(pool.base_time);
 
@@ -58,11 +51,21 @@ pub fn process_sync_pool(
         return Ok(());
     }
 
+    // Record the original base_time before first rebase so legacy UserStake
+    // accounts can be lazily adjusted (their exp_start_factor is relative
+    // to the initial base_time).
+    if pool.initial_base_time == 0 {
+        pool.initial_base_time = pool.base_time;
+    }
+
     // Calculate the decay factor: e^(-time_delta / tau)
+    // For very large time_delta (> 87*tau), exp_neg_time_ratio returns 0,
+    // meaning all stakes are fully matured and sum_stake_exp zeroes out.
     let decay_factor = exp_neg_time_ratio(time_delta, pool.tau_seconds)?;
 
     // Scale down sum_stake_exp by decay factor
     // new_sum_stake_exp = old_sum_stake_exp * decay_factor / WAD
+    let sum_stake_exp = pool.get_sum_stake_exp();
     let decay_u256 = U256::from_u128(decay_factor);
     let new_sum_stake_exp = wad_mul_u256(sum_stake_exp, decay_u256)?;
 

@@ -67,6 +67,9 @@ pub fn process_cancel_unstake_request(
         return Err(StakingError::InvalidPDA.into());
     }
 
+    // Lazily adjust exp_start_factor if pool has been rebased
+    user_stake.sync_to_pool(&pool)?;
+
     // Check there is a pending request
     if !user_stake.has_pending_unstake_request() {
         return Err(StakingError::NoPendingUnstakeRequest.into());
