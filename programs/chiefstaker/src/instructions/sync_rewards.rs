@@ -16,14 +16,9 @@ use solana_program::{
 
 use crate::{
     error::StakingError,
-    math::{calculate_total_weighted_stake, wad_div, WAD},
+    math::{wad_div, WAD},
     state::StakingPool,
 };
-
-/// Minimum weighted stake required to distribute rewards
-/// If total_weighted is below this, rewards are held until more weight accumulates
-/// Set to 1 WAD (equivalent to 1 token with full weight)
-const MIN_WEIGHTED_STAKE_FOR_DISTRIBUTION: u128 = WAD;
 
 /// Sync rewards that were sent directly to the pool account
 /// This is a permissionless crank that anyone can call
@@ -52,11 +47,6 @@ pub fn process_sync_rewards(
         return Err(StakingError::InvalidPDA.into());
     }
 
-    // Check if pool needs rebasing
-    if pool.get_sum_stake_exp().needs_rebase() {
-        return Err(StakingError::PoolRequiresSync.into());
-    }
-
     let rent = Rent::get()?;
     let clock = Clock::get()?;
     let current_time = clock.unix_timestamp;
@@ -65,8 +55,6 @@ pub fn process_sync_rewards(
     let pool_lamports = pool_info.lamports();
     let rent_exempt_minimum = rent.minimum_balance(pool_info.data_len());
 
-    // Track distributed rewards in the pool state
-    // New field: last_known_lamports tracks what we've already accounted for
     let last_known = pool.last_synced_lamports;
     let current_available = pool_lamports.saturating_sub(rent_exempt_minimum);
 
@@ -78,33 +66,25 @@ pub fn process_sync_rewards(
         return Ok(());
     }
 
-    // Calculate current total weighted stake
-    let total_weighted = calculate_total_weighted_stake(
-        pool.total_staked,
-        &pool.get_sum_stake_exp(),
-        current_time,
-        pool.base_time,
-        pool.tau_seconds,
-    )?;
+    // Denominator: total_staked * WAD (max weight, not time-varying)
+    let total_staked_wad = (pool.total_staked as u128)
+        .checked_mul(WAD)
+        .ok_or(StakingError::MathOverflow)?;
 
-    if total_weighted < MIN_WEIGHTED_STAKE_FOR_DISTRIBUTION {
-        // Not enough weighted stake to distribute rewards safely.
-        // Do NOT update last_synced_lamports so the rewards remain pending
-        // and will be distributed once sufficient weight accumulates.
+    if total_staked_wad == 0 {
+        // No stakers to distribute to. Leave rewards pending.
         msg!(
-            "Rewards deferred: {} new lamports, weighted stake {} below threshold {}",
+            "Rewards deferred: {} new lamports, no stakers",
             new_rewards,
-            total_weighted,
-            MIN_WEIGHTED_STAKE_FOR_DISTRIBUTION
         );
         return Ok(());
     }
 
-    // Calculate reward per weighted share
+    // Calculate reward per share using max weight denominator
     let amount_wad = (new_rewards as u128)
         .checked_mul(WAD)
         .ok_or(StakingError::MathOverflow)?;
-    let reward_per_share = wad_div(amount_wad, total_weighted)?;
+    let reward_per_share = wad_div(amount_wad, total_staked_wad)?;
 
     // Update accumulator
     pool.acc_reward_per_weighted_share = pool

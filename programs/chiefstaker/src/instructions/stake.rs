@@ -150,7 +150,7 @@ pub fn process_stake(
         )?;
 
         // Initialize user stake
-        let user_stake = UserStake::new(
+        let mut user_stake = UserStake::new(
             *user_info.key,
             *pool_info.key,
             amount,
@@ -159,6 +159,12 @@ pub fn process_stake(
             stake_bump,
             pool.base_time,
         );
+
+        // Set reward_debt using max weight (amount * WAD) to prevent accessing prior rewards
+        user_stake.reward_debt = wad_mul(
+            (amount as u128).checked_mul(WAD).ok_or(StakingError::MathOverflow)?,
+            pool.acc_reward_per_weighted_share,
+        )?;
 
         let mut stake_data = user_stake_info.try_borrow_mut_data()?;
         user_stake.serialize(&mut &mut stake_data[..])?;
@@ -280,16 +286,12 @@ pub fn process_stake(
         // Note: stake_time stays as original for weight calculation purposes
         user_stake.last_stake_time = current_time;
 
-        // Recalculate reward_debt for new weighted stake to prevent reward theft.
+        // Recalculate reward_debt using max weight (total_amount * WAD) to prevent reward theft.
         // Subtract any unpaid rewards so they remain claimable.
-        let new_user_weighted = calculate_user_weighted_stake(
-            total_amount,
-            new_exp_factor,
-            current_time,
-            pool.base_time,
-            pool.tau_seconds,
-        )?;
-        let base_debt = wad_mul(new_user_weighted, pool.acc_reward_per_weighted_share)?;
+        let total_amount_wad = (total_amount as u128)
+            .checked_mul(WAD)
+            .ok_or(StakingError::MathOverflow)?;
+        let base_debt = wad_mul(total_amount_wad, pool.acc_reward_per_weighted_share)?;
         user_stake.reward_debt = base_debt.saturating_sub(unpaid_rewards_wad);
 
         let mut stake_data = user_stake_info.try_borrow_mut_data()?;

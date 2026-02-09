@@ -117,16 +117,12 @@ pub fn execute_unstake<'a>(
         .checked_sub(amount)
         .ok_or(StakingError::MathUnderflow)?;
 
-    // Recalculate reward debt for remaining stake, preserving any unpaid rewards
+    // Recalculate reward debt for remaining stake using max weight, preserving any unpaid rewards
     if user_stake.amount > 0 {
-        let new_user_weighted = calculate_user_weighted_stake(
-            user_stake.amount,
-            user_stake.exp_start_factor,
-            current_time,
-            pool.base_time,
-            pool.tau_seconds,
-        )?;
-        let base_debt = wad_mul(new_user_weighted, pool.acc_reward_per_weighted_share)?;
+        let remaining_amount_wad = (user_stake.amount as u128)
+            .checked_mul(WAD)
+            .ok_or(StakingError::MathOverflow)?;
+        let base_debt = wad_mul(remaining_amount_wad, pool.acc_reward_per_weighted_share)?;
         // Subtract unpaid rewards so they remain claimable
         user_stake.reward_debt = base_debt.saturating_sub(unpaid_rewards_wad);
     } else {
