@@ -1,0 +1,853 @@
+{
+  "version": "0.1.0",
+  "name": "chiefstaker",
+  "metadata": {
+    "address": "3Ecf8gyRURyrBtGHS1XAVXyQik5PqgDch4VkxrH4ECcr",
+    "origin": "native",
+    "serialization": "borsh",
+    "description": "Token 2022 staking with time-weighted rewards. Uses Borsh enum discriminators (single u8 variant index), NOT Anchor 8-byte sighashes."
+  },
+  "instructions": [
+    {
+      "name": "initializePool",
+      "discriminator": [0],
+      "docs": [
+        "Initialize a new staking pool for a Token 2022 mint.",
+        "PDA seeds: [\"pool\", mint]"
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account (PDA: [\"pool\", mint])"]
+        },
+        {
+          "name": "mint",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Token mint (Token 2022)"]
+        },
+        {
+          "name": "tokenVault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Token vault (PDA: [\"token_vault\", pool])"]
+        },
+        {
+          "name": "authority",
+          "isMut": true,
+          "isSigner": true,
+          "docs": ["Authority / payer"]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["System program"]
+        },
+        {
+          "name": "tokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Token 2022 program"]
+        },
+        {
+          "name": "rent",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Rent sysvar"]
+        }
+      ],
+      "args": [
+        {
+          "name": "tauSeconds",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "stake",
+      "discriminator": [1],
+      "docs": [
+        "Stake tokens into the pool. Creates user stake account if needed.",
+        "Auto-claims pending rewards when adding to an existing stake."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "userStake",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["User stake account (PDA: [\"stake\", pool, owner])"]
+        },
+        {
+          "name": "tokenVault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Token vault"]
+        },
+        {
+          "name": "userTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["User token account"]
+        },
+        {
+          "name": "mint",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Token mint"]
+        },
+        {
+          "name": "owner",
+          "isMut": true,
+          "isSigner": true,
+          "docs": ["User / owner"]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["System program"]
+        },
+        {
+          "name": "tokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Token 2022 program"]
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "unstake",
+      "discriminator": [2],
+      "docs": [
+        "Unstake tokens from the pool (direct unstake).",
+        "Only available when pool has no cooldown configured.",
+        "Claims pending rewards and redistributes stranded rewards."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "userStake",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["User stake account"]
+        },
+        {
+          "name": "tokenVault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Token vault"]
+        },
+        {
+          "name": "userTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["User token account"]
+        },
+        {
+          "name": "mint",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Token mint"]
+        },
+        {
+          "name": "owner",
+          "isMut": true,
+          "isSigner": true,
+          "docs": ["User / owner"]
+        },
+        {
+          "name": "tokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Token 2022 program"]
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "claimRewards",
+      "discriminator": [3],
+      "docs": [
+        "Claim accumulated SOL rewards.",
+        "SOL is transferred from pool PDA lamports to user."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account (holds SOL rewards)"]
+        },
+        {
+          "name": "userStake",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["User stake account"]
+        },
+        {
+          "name": "owner",
+          "isMut": true,
+          "isSigner": true,
+          "docs": ["User / owner"]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "depositRewards",
+      "discriminator": [4],
+      "docs": [
+        "Deposit SOL rewards into the pool (permissionless).",
+        "Transfers lamports from depositor to pool PDA and triggers sync."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account (receives SOL)"]
+        },
+        {
+          "name": "depositor",
+          "isMut": true,
+          "isSigner": true,
+          "docs": ["Depositor"]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["System program"]
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "syncPool",
+      "discriminator": [5],
+      "docs": [
+        "Sync/rebase the pool to prevent sum_stake_exp overflow (permissionless crank).",
+        "Should be called periodically to keep the pool operational."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "syncRewards",
+      "discriminator": [6],
+      "docs": [
+        "Sync rewards sent directly to the pool PDA (permissionless crank).",
+        "Use when SOL is sent directly to the pool PDA (e.g., from pump.fun).",
+        "Detects new lamports via last_synced_lamports delta."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "updatePoolSettings",
+      "discriminator": [7],
+      "docs": [
+        "Update pool settings (authority only).",
+        "Each field is optional; only provided fields are updated.",
+        "Max caps: lock_duration <= 365 days, cooldown <= 30 days."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "authority",
+          "isMut": false,
+          "isSigner": true,
+          "docs": ["Pool authority"]
+        }
+      ],
+      "args": [
+        {
+          "name": "minStakeAmount",
+          "type": {
+            "option": "u64"
+          }
+        },
+        {
+          "name": "lockDurationSeconds",
+          "type": {
+            "option": "u64"
+          }
+        },
+        {
+          "name": "unstakeCooldownSeconds",
+          "type": {
+            "option": "u64"
+          }
+        }
+      ]
+    },
+    {
+      "name": "transferAuthority",
+      "discriminator": [8],
+      "docs": [
+        "Transfer pool authority to a new address.",
+        "Setting to Pubkey::default() (all zeros) renounces authority irreversibly."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "authority",
+          "isMut": false,
+          "isSigner": true,
+          "docs": ["Current authority"]
+        }
+      ],
+      "args": [
+        {
+          "name": "newAuthority",
+          "type": "publicKey"
+        }
+      ]
+    },
+    {
+      "name": "requestUnstake",
+      "discriminator": [9],
+      "docs": [
+        "Request unstake - starts cooldown period.",
+        "Tokens remain staked during cooldown. Only one pending request at a time."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "userStake",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["User stake account"]
+        },
+        {
+          "name": "owner",
+          "isMut": false,
+          "isSigner": true,
+          "docs": ["User / owner"]
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "completeUnstake",
+      "discriminator": [10],
+      "docs": [
+        "Complete unstake after cooldown has elapsed.",
+        "Claims pending rewards and redistributes stranded rewards."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "userStake",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["User stake account"]
+        },
+        {
+          "name": "tokenVault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Token vault"]
+        },
+        {
+          "name": "userTokenAccount",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["User token account"]
+        },
+        {
+          "name": "mint",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Token mint"]
+        },
+        {
+          "name": "owner",
+          "isMut": true,
+          "isSigner": true,
+          "docs": ["User / owner"]
+        },
+        {
+          "name": "tokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Token 2022 program"]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "cancelUnstakeRequest",
+      "discriminator": [11],
+      "docs": [
+        "Cancel a pending unstake request.",
+        "Tokens remain staked."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "userStake",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["User stake account"]
+        },
+        {
+          "name": "owner",
+          "isMut": false,
+          "isSigner": true,
+          "docs": ["User / owner"]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "closeStakeAccount",
+      "discriminator": [12],
+      "docs": [
+        "Close a zero-balance user stake account to reclaim rent.",
+        "Account must have zero staked amount and no pending unstake request."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": false,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "userStake",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["User stake account"]
+        },
+        {
+          "name": "owner",
+          "isMut": true,
+          "isSigner": true,
+          "docs": ["User / owner (receives rent refund)"]
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "StakingPool",
+      "discriminator": [199, 95, 126, 45, 59, 26, 156, 78],
+      "docs": [
+        "Staking pool state account.",
+        "PDA seeds: [\"pool\", mint].",
+        "Size: 289 bytes."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "discriminator",
+            "type": {
+              "array": ["u8", 8]
+            },
+            "docs": ["Account type discriminator: [0xc7, 0x5f, 0x7e, 0x2d, 0x3b, 0x1a, 0x9c, 0x4e]"]
+          },
+          {
+            "name": "mint",
+            "type": "publicKey",
+            "docs": ["Token 2022 mint address"]
+          },
+          {
+            "name": "tokenVault",
+            "type": "publicKey",
+            "docs": ["PDA holding staked tokens"]
+          },
+          {
+            "name": "rewardVault",
+            "type": "publicKey",
+            "docs": ["DEPRECATED: No longer used (pool PDA holds SOL directly). Retained for layout compatibility."]
+          },
+          {
+            "name": "authority",
+            "type": "publicKey",
+            "docs": ["Admin authority who initialized the pool"]
+          },
+          {
+            "name": "totalStaked",
+            "type": "u128",
+            "docs": ["Total tokens staked (raw amount, not WAD-scaled)"]
+          },
+          {
+            "name": "sumStakeExp",
+            "type": {
+              "array": ["u8", 32]
+            },
+            "docs": ["Sum of stake_i * e^(start_time_i / tau) as U256 little-endian bytes (WAD-scaled)"]
+          },
+          {
+            "name": "tauSeconds",
+            "type": "u64",
+            "docs": ["Time constant in seconds (e.g., 2592000 for 30 days)"]
+          },
+          {
+            "name": "baseTime",
+            "type": "i64",
+            "docs": ["Base time for rebasing (Unix timestamp). All exp_start_factors are relative to this."]
+          },
+          {
+            "name": "accRewardPerWeightedShare",
+            "type": "u128",
+            "docs": ["Accumulated reward per weighted share (WAD-scaled, 10^18)"]
+          },
+          {
+            "name": "lastUpdateTime",
+            "type": "i64",
+            "docs": ["Last time rewards were updated (Unix timestamp)"]
+          },
+          {
+            "name": "bump",
+            "type": "u8",
+            "docs": ["PDA bump seed"]
+          },
+          {
+            "name": "lastSyncedLamports",
+            "type": "u64",
+            "docs": ["Last known lamport balance (for sync_rewards to detect new deposits)"]
+          },
+          {
+            "name": "minStakeAmount",
+            "type": "u64",
+            "docs": ["Minimum stake amount (0 = no minimum)"]
+          },
+          {
+            "name": "lockDurationSeconds",
+            "type": "u64",
+            "docs": ["Lock duration in seconds after staking before unstake is allowed (0 = no lock)"]
+          },
+          {
+            "name": "unstakeCooldownSeconds",
+            "type": "u64",
+            "docs": ["Unstake cooldown period in seconds (0 = direct unstake, >0 = requires RequestUnstake flow)"]
+          },
+          {
+            "name": "initialBaseTime",
+            "type": "i64",
+            "docs": ["Original base_time before first rebase (0 = no rebase has occurred). Used for legacy account migration."]
+          },
+          {
+            "name": "reserved3",
+            "type": {
+              "array": ["u8", 24]
+            },
+            "docs": ["Reserved space for future upgrades"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "UserStake",
+      "discriminator": [163, 139, 93, 47, 124, 74, 30, 157],
+      "docs": [
+        "User stake account.",
+        "PDA seeds: [\"stake\", pool, owner].",
+        "Size: 153 bytes."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "discriminator",
+            "type": {
+              "array": ["u8", 8]
+            },
+            "docs": ["Account type discriminator: [0xa3, 0x8b, 0x5d, 0x2f, 0x7c, 0x4a, 0x1e, 0x9d]"]
+          },
+          {
+            "name": "owner",
+            "type": "publicKey",
+            "docs": ["Owner of this stake"]
+          },
+          {
+            "name": "pool",
+            "type": "publicKey",
+            "docs": ["Pool this stake belongs to"]
+          },
+          {
+            "name": "amount",
+            "type": "u64",
+            "docs": ["Amount of tokens staked"]
+          },
+          {
+            "name": "stakeTime",
+            "type": "i64",
+            "docs": ["Unix timestamp when stake began"]
+          },
+          {
+            "name": "expStartFactor",
+            "type": "u128",
+            "docs": ["e^((stake_time - base_time) / tau) at time of staking (WAD-scaled). Used to track contribution to sum_stake_exp."]
+          },
+          {
+            "name": "rewardDebt",
+            "type": "u128",
+            "docs": ["Reward debt for pending reward calculation (WAD-scaled). reward_debt = amount_wad * acc_reward_per_weighted_share at last update."]
+          },
+          {
+            "name": "bump",
+            "type": "u8",
+            "docs": ["PDA bump seed"]
+          },
+          {
+            "name": "unstakeRequestAmount",
+            "type": "u64",
+            "docs": ["Pending unstake request amount (0 = no pending request)"]
+          },
+          {
+            "name": "unstakeRequestTime",
+            "type": "i64",
+            "docs": ["Timestamp when unstake was requested"]
+          },
+          {
+            "name": "lastStakeTime",
+            "type": "i64",
+            "docs": ["Timestamp of most recent stake deposit (for lock duration checks). Falls back to stake_time when 0."]
+          },
+          {
+            "name": "baseTimeSnapshot",
+            "type": "i64",
+            "docs": ["Pool base_time when exp_start_factor was last calibrated. 0 = legacy account (pre-rebase-aware)."]
+          }
+        ]
+      }
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidInstruction",
+      "msg": "Invalid instruction data"
+    },
+    {
+      "code": 6001,
+      "name": "AlreadyInitialized",
+      "msg": "Account already initialized"
+    },
+    {
+      "code": 6002,
+      "name": "NotInitialized",
+      "msg": "Account not initialized"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidPoolMint",
+      "msg": "Invalid pool mint"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidTokenVault",
+      "msg": "Invalid token vault"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidRewardVault",
+      "msg": "Invalid reward vault"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidAuthority",
+      "msg": "Invalid authority"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidOwner",
+      "msg": "Invalid owner"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidPool",
+      "msg": "Invalid pool"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidPDA",
+      "msg": "Invalid PDA"
+    },
+    {
+      "code": 6010,
+      "name": "InsufficientStakeBalance",
+      "msg": "Insufficient stake balance"
+    },
+    {
+      "code": 6011,
+      "name": "InsufficientRewardBalance",
+      "msg": "Insufficient reward balance"
+    },
+    {
+      "code": 6012,
+      "name": "MathOverflow",
+      "msg": "Math overflow"
+    },
+    {
+      "code": 6013,
+      "name": "MathUnderflow",
+      "msg": "Math underflow"
+    },
+    {
+      "code": 6014,
+      "name": "ZeroAmount",
+      "msg": "Zero amount not allowed"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidTau",
+      "msg": "Invalid tau value"
+    },
+    {
+      "code": 6016,
+      "name": "PoolRequiresSync",
+      "msg": "Pool requires sync before operation"
+    },
+    {
+      "code": 6017,
+      "name": "InvalidMintProgram",
+      "msg": "Invalid mint - must be Token 2022"
+    },
+    {
+      "code": 6018,
+      "name": "MissingRequiredSigner",
+      "msg": "Missing required signer"
+    },
+    {
+      "code": 6019,
+      "name": "AccountDataTooSmall",
+      "msg": "Account data too small"
+    },
+    {
+      "code": 6020,
+      "name": "InvalidAccountOwner",
+      "msg": "Invalid account owner"
+    },
+    {
+      "code": 6021,
+      "name": "BelowMinimumStake",
+      "msg": "Stake amount below pool minimum"
+    },
+    {
+      "code": 6022,
+      "name": "StakeLocked",
+      "msg": "Stake is locked - lock duration has not elapsed"
+    },
+    {
+      "code": 6023,
+      "name": "CooldownNotElapsed",
+      "msg": "Unstake cooldown period has not elapsed"
+    },
+    {
+      "code": 6024,
+      "name": "CooldownRequired",
+      "msg": "Pool requires RequestUnstake flow, not direct Unstake"
+    },
+    {
+      "code": 6025,
+      "name": "NoPendingUnstakeRequest",
+      "msg": "No pending unstake request"
+    },
+    {
+      "code": 6026,
+      "name": "PendingUnstakeRequestExists",
+      "msg": "Must cancel existing unstake request first"
+    },
+    {
+      "code": 6027,
+      "name": "AuthorityRenounced",
+      "msg": "Authority has been renounced"
+    },
+    {
+      "code": 6028,
+      "name": "CooldownNotConfigured",
+      "msg": "Pool has no cooldown configured - use direct Unstake instead"
+    },
+    {
+      "code": 6029,
+      "name": "SettingExceedsMaximum",
+      "msg": "Setting value exceeds maximum allowed"
+    },
+    {
+      "code": 6030,
+      "name": "AccountNotEmpty",
+      "msg": "User stake account still has balance or pending requests"
+    }
+  ],
+  "types": []
+}
