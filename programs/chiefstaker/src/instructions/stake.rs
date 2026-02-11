@@ -166,6 +166,12 @@ pub fn process_stake(
             pool.acc_reward_per_weighted_share,
         )?;
 
+        // Track in pool-level aggregate
+        pool.total_reward_debt = pool
+            .total_reward_debt
+            .checked_add(user_stake.reward_debt)
+            .ok_or(StakingError::MathOverflow)?;
+
         let mut stake_data = user_stake_info.try_borrow_mut_data()?;
         user_stake.serialize(&mut &mut stake_data[..])?;
 
@@ -215,11 +221,15 @@ pub fn process_stake(
         // Lazily adjust exp_start_factor if pool has been rebased
         user_stake.sync_to_pool(&pool)?;
 
+        // Capture old reward_debt for total_reward_debt bookkeeping
+        let old_reward_debt = user_stake.reward_debt;
+
         // Auto-claim pending rewards before resetting reward_debt.
         // Track any unpaid portion so it remains claimable after the stake update.
         // NOTE: Actual SOL transfer is deferred until after the token CPI to avoid
         // Solana's CPI balance check failure (same pattern as execute_unstake).
         let mut unpaid_rewards_wad: u128 = 0;
+        let mut actual_pending_wad: u128 = 0;
         let user_weighted_before = calculate_user_weighted_stake(
             user_stake.amount,
             user_stake.exp_start_factor,
@@ -230,6 +240,7 @@ pub fn process_stake(
         if user_weighted_before > 0 && pool.acc_reward_per_weighted_share > 0 {
             let accumulated = wad_mul(user_weighted_before, pool.acc_reward_per_weighted_share)?;
             let pending = accumulated.saturating_sub(user_stake.reward_debt);
+            actual_pending_wad = pending;
             if pending > 0 {
                 let pending_lamports = pending / WAD;
                 if pending_lamports > 0 {
@@ -247,6 +258,25 @@ pub fn process_stake(
                         .ok_or(StakingError::MathOverflow)?;
                     unpaid_rewards_wad = pending.saturating_sub(paid_wad);
                 }
+            }
+        }
+
+        // Calculate stranded rewards: allocated at max weight but not yet claimable
+        // at current weight. Return them to the pool (via last_synced_lamports reduction)
+        // so the next sync_rewards redistributes them to all stakers.
+        // Same pattern as execute_unstake's stranded calculation.
+        if pool.acc_reward_per_weighted_share > 0 {
+            let old_amount_wad = (user_stake.amount as u128)
+                .checked_mul(WAD)
+                .ok_or(StakingError::MathOverflow)?;
+            let max_pending_wad = wad_mul(old_amount_wad, pool.acc_reward_per_weighted_share)?
+                .saturating_sub(user_stake.reward_debt);
+            let stranded_wad = max_pending_wad.saturating_sub(actual_pending_wad);
+            let stranded_lamports = (stranded_wad / WAD) as u64;
+            if stranded_lamports > 0 {
+                pool.last_synced_lamports =
+                    pool.last_synced_lamports.saturating_sub(stranded_lamports);
+                msg!("Returned {} stranded lamports for redistribution", stranded_lamports);
             }
         }
 
@@ -293,6 +323,13 @@ pub fn process_stake(
             .ok_or(StakingError::MathOverflow)?;
         let base_debt = wad_mul(total_amount_wad, pool.acc_reward_per_weighted_share)?;
         user_stake.reward_debt = base_debt.saturating_sub(unpaid_rewards_wad);
+
+        // Update pool-level aggregate: subtract old, add new (saturating for bootstrapping)
+        pool.total_reward_debt = pool
+            .total_reward_debt
+            .saturating_sub(old_reward_debt)
+            .checked_add(user_stake.reward_debt)
+            .ok_or(StakingError::MathOverflow)?;
 
         let mut stake_data = user_stake_info.try_borrow_mut_data()?;
         user_stake.serialize(&mut &mut stake_data[..])?;

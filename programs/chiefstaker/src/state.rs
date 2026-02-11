@@ -75,8 +75,14 @@ pub struct StakingPool {
     /// Used to lazily adjust legacy UserStake.exp_start_factor after rebase.
     pub initial_base_time: i64,
 
+    /// Sum of all active users' reward_debt values.
+    /// Maintained incrementally by stake/unstake/claim instructions.
+    /// Used by RecoverStrandedRewards to compute stranded rewards from pool state alone.
+    /// Starts at 0 for existing pools (bootstraps conservatively — under-recovery is safe).
+    pub total_reward_debt: u128,
+
     /// Reserved space for future upgrades
-    pub _reserved3: [u8; 24],
+    pub _reserved3: [u8; 8],
 }
 
 impl StakingPool {
@@ -98,7 +104,8 @@ impl StakingPool {
         8 +  // lock_duration_seconds
         8 +  // unstake_cooldown_seconds
         8 +  // initial_base_time
-        24;  // _reserved3
+        16 + // total_reward_debt
+        8;   // _reserved3
 
     /// Create a new staking pool
     pub fn new(
@@ -128,7 +135,8 @@ impl StakingPool {
             lock_duration_seconds: 0,
             unstake_cooldown_seconds: 0,
             initial_base_time: 0,
-            _reserved3: [0u8; 24],
+            total_reward_debt: 0,
+            _reserved3: [0u8; 8],
         }
     }
 

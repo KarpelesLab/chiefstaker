@@ -39,6 +39,9 @@ pub fn execute_unstake<'a>(
     current_time: i64,
 ) -> ProgramResult {
 
+    // Capture old reward_debt for total_reward_debt bookkeeping
+    let old_reward_debt = user_stake.reward_debt;
+
     // Calculate pending rewards (but defer SOL transfer until after token CPI,
     // because the Solana runtime verifies CPI account balances and user_info
     // is not a CPI account)
@@ -156,6 +159,13 @@ pub fn execute_unstake<'a>(
     } else {
         user_stake.reward_debt = 0;
     }
+
+    // Update pool-level aggregate: subtract old, add new (saturating for bootstrapping)
+    pool.total_reward_debt = pool
+        .total_reward_debt
+        .saturating_sub(old_reward_debt)
+        .checked_add(user_stake.reward_debt)
+        .ok_or(StakingError::MathOverflow)?;
 
     // Save states (before CPI — pool data includes pre-updated last_synced_lamports)
     {

@@ -152,6 +152,12 @@ pub fn process_claim_rewards(
         .checked_add(paid_wad)
         .ok_or(StakingError::MathOverflow)?;
 
+    // Track in pool-level aggregate
+    pool.total_reward_debt = pool
+        .total_reward_debt
+        .checked_add(paid_wad)
+        .ok_or(StakingError::MathOverflow)?;
+
     // Update last_synced_lamports so sync_rewards doesn't miss new deposits
     pool.last_synced_lamports = pool.last_synced_lamports.saturating_sub(transfer_amount);
 

@@ -502,6 +502,24 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "recoverStrandedRewards",
+      "discriminator": [13],
+      "docs": [
+        "Recover stranded rewards stuck in the pool (permissionless).",
+        "Computes stranded amount on-chain using pool-level total_reward_debt tracking.",
+        "Reduces last_synced_lamports so the next sync_rewards redistributes the excess."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "isMut": true,
+          "isSigner": false,
+          "docs": ["Pool account"]
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -606,9 +624,14 @@
             "docs": ["Original base_time before first rebase (0 = no rebase has occurred). Used for legacy account migration."]
           },
           {
+            "name": "totalRewardDebt",
+            "type": "u128",
+            "docs": ["Sum of all active users' reward_debt values (WAD-scaled). Used by RecoverStrandedRewards to compute stranded rewards from pool state alone. Starts at 0 for existing pools."]
+          },
+          {
             "name": "reserved3",
             "type": {
-              "array": ["u8", 24]
+              "array": ["u8", 8]
             },
             "docs": ["Reserved space for future upgrades"]
           }

@@ -164,6 +164,15 @@ pub enum StakingInstruction {
     /// 1. `[writable]` User stake account
     /// 2. `[writable, signer]` User/owner
     CloseStakeAccount,
+
+    /// Recover stranded rewards stuck in the pool (permissionless)
+    ///
+    /// Computes stranded amount on-chain using pool-level `total_reward_debt`
+    /// tracking. No additional accounts needed beyond the pool itself.
+    ///
+    /// Accounts:
+    /// 0. `[writable]` Pool account
+    RecoverStrandedRewards,
 }
 
 #[cfg(not(feature = "no-entrypoint"))]
@@ -247,6 +256,10 @@ pub fn process_instruction(
         StakingInstruction::CloseStakeAccount => {
             msg!("Instruction: CloseStakeAccount");
             process_close_stake_account(program_id, accounts)
+        }
+        StakingInstruction::RecoverStrandedRewards => {
+            msg!("Instruction: RecoverStrandedRewards");
+            process_recover_stranded_rewards(program_id, accounts)
         }
     }
 }
