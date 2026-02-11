@@ -53,6 +53,8 @@ enum InstructionType {
   RequestUnstake = 9,
   CompleteUnstake = 10,
   CancelUnstakeRequest = 11,
+  CloseStakeAccount = 12,
+  RecoverStrandedRewards = 13,
 }
 
 // Helper to derive PDAs
@@ -356,6 +358,36 @@ function createCancelUnstakeRequestInstruction(
   });
 }
 
+function createRecoverStrandedRewardsInstruction(
+  pool: PublicKey,
+): TransactionInstruction {
+  const data = Buffer.alloc(1);
+  data.writeUInt8(InstructionType.RecoverStrandedRewards, 0);
+
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: pool, isSigner: false, isWritable: true },
+    ],
+    programId: PROGRAM_ID,
+    data,
+  });
+}
+
+// Helper to read u128 little-endian from a Buffer
+function readU128LE(buf: Buffer, offset: number): bigint {
+  const lo = buf.readBigUInt64LE(offset);
+  const hi = buf.readBigUInt64LE(offset + 8);
+  return lo + (hi << 64n);
+}
+
+// Decoded pool state fields relevant to reward accounting
+interface PoolState {
+  totalStaked: bigint;
+  accRewardPerWeightedShare: bigint;
+  lastSyncedLamports: bigint;
+  totalRewardDebt: bigint;
+}
+
 // Test context
 class TestContext {
   connection: Connection;
@@ -597,6 +629,29 @@ class TestContext {
 
     const tx = new Transaction().add(ix);
     return await sendAndConfirmTransaction(this.connection, tx, [this.payer, user]);
+  }
+
+  async recoverStrandedRewards(): Promise<string> {
+    const ix = createRecoverStrandedRewardsInstruction(this.poolPDA);
+    const tx = new Transaction().add(ix);
+    return await sendAndConfirmTransaction(this.connection, tx, [this.payer]);
+  }
+
+  async readPoolState(): Promise<PoolState> {
+    const info = await this.connection.getAccountInfo(this.poolPDA);
+    if (!info) throw new Error('Pool account not found');
+    const data = info.data;
+    // Offsets from Borsh serialization layout (state.rs):
+    // 136: total_staked (u128)
+    // 200: acc_reward_per_weighted_share (u128)
+    // 225: last_synced_lamports (u64)
+    // 265: total_reward_debt (u128)
+    return {
+      totalStaked: readU128LE(data, 136),
+      accRewardPerWeightedShare: readU128LE(data, 200),
+      lastSyncedLamports: BigInt(data.readBigUInt64LE(225)),
+      totalRewardDebt: readU128LE(data, 265),
+    };
   }
 
   async getBalance(pubkey: PublicKey): Promise<number> {
@@ -2602,6 +2657,448 @@ async function runTests() {
       throw new Error(`Fairness check failed: Alice (${rewards.alice}) should earn more than Dave (${rewards.dave})`);
     }
     console.log(`    Fairness check: OK (Alice=${rewards.alice} > Dave=${rewards.dave})`);
+  });
+
+  // ============================================
+  // SOL CONSERVATION & RECOVERY TESTS
+  // ============================================
+  // Verify no SOL is lost (dead/stranded) from additional stakes,
+  // and that RecoverStrandedRewards works correctly.
+
+  console.log('\n--- SOL Conservation & Recovery Tests ---\n');
+
+  // Test: Additional stakes don't create dead SOL (round 7 fix regression test)
+  await test('Conservation: additional stakes preserve all rewards', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(5)); // 5s tau
+
+    const staker1 = Keypair.generate();
+    const staker2 = Keypair.generate();
+    await airdropAndConfirm(connection, staker1.publicKey, 3 * LAMPORTS_PER_SOL);
+    await airdropAndConfirm(connection, staker2.publicKey, 3 * LAMPORTS_PER_SOL);
+
+    const token1 = await ctx.createUserTokenAccount(staker1.publicKey);
+    const token2 = await ctx.createUserTokenAccount(staker2.publicKey);
+    await ctx.mintTokens(token1, BigInt(2_000_000_000));
+    await ctx.mintTokens(token2, BigInt(2_000_000_000));
+
+    // Both stake 1B tokens
+    await ctx.stake(staker1, token1, BigInt(1_000_000_000));
+    await ctx.stake(staker2, token2, BigInt(1_000_000_000));
+
+    // Wait for partial maturity (~86% weight at 2τ)
+    console.log('    Waiting 10s (2τ) for partial maturity...');
+    await new Promise(r => setTimeout(r, 10000));
+
+    // Deposit 1 SOL
+    const deposit1 = BigInt(LAMPORTS_PER_SOL);
+    await ctx.depositRewards(deposit1);
+
+    // Staker1 does additional stake (this was the bug vector)
+    // The auto-claim should pay actual_pending, and stranded should be returned to pool
+    let totalClaimed = BigInt(0);
+    let bal0 = BigInt(await ctx.getBalance(staker1.publicKey));
+    await ctx.stake(staker1, token1, BigInt(500_000_000));
+    let bal0After = BigInt(await ctx.getBalance(staker1.publicKey));
+    // Additional stake auto-claims rewards — track that SOL
+    totalClaimed += (bal0After - bal0 + BigInt(5000));
+
+    // Wait for more maturity
+    console.log('    Waiting 10s (2τ more)...');
+    await new Promise(r => setTimeout(r, 10000));
+
+    // Deposit 1 more SOL
+    const deposit2 = BigInt(LAMPORTS_PER_SOL);
+    await ctx.depositRewards(deposit2);
+
+    const totalDeposited = deposit1 + deposit2;
+
+    // Both claim and fully unstake
+
+    // Staker1: claim + unstake
+    let bal = BigInt(await ctx.getBalance(staker1.publicKey));
+    await ctx.claimRewards(staker1);
+    let balAfter = BigInt(await ctx.getBalance(staker1.publicKey));
+    totalClaimed += (balAfter - bal + BigInt(5000)); // +5000 for tx fee
+
+    bal = BigInt(await ctx.getBalance(staker1.publicKey));
+    await ctx.unstake(staker1, token1, BigInt(1_500_000_000));
+    balAfter = BigInt(await ctx.getBalance(staker1.publicKey));
+    totalClaimed += (balAfter - bal + BigInt(5000)); // reward portion from unstake
+
+    // Staker2: claim + unstake
+    bal = BigInt(await ctx.getBalance(staker2.publicKey));
+    await ctx.claimRewards(staker2);
+    balAfter = BigInt(await ctx.getBalance(staker2.publicKey));
+    totalClaimed += (balAfter - bal + BigInt(5000));
+
+    bal = BigInt(await ctx.getBalance(staker2.publicKey));
+    await ctx.unstake(staker2, token2, BigInt(1_000_000_000));
+    balAfter = BigInt(await ctx.getBalance(staker2.publicKey));
+    totalClaimed += (balAfter - bal + BigInt(5000));
+
+    // Check pool remaining
+    const poolBalance = BigInt(await ctx.getBalance(ctx.poolPDA));
+    const poolAccountInfo = await connection.getAccountInfo(ctx.poolPDA);
+    const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(poolAccountInfo!.data.length));
+    const poolRewardsRemaining = poolBalance - rentExempt;
+
+    const accounted = totalClaimed + poolRewardsRemaining;
+    const diff = accounted > totalDeposited
+      ? accounted - totalDeposited
+      : totalDeposited - accounted;
+
+    console.log(`    Total deposited:    ${totalDeposited} lamports`);
+    console.log(`    Total claimed:      ${totalClaimed} lamports`);
+    console.log(`    Pool remaining:     ${poolRewardsRemaining} lamports`);
+    console.log(`    Accounted:          ${accounted} lamports`);
+    console.log(`    Diff:               ${diff} lamports`);
+
+    // The deadSOL from the old bug would show up as a large poolRewardsRemaining
+    // (SOL stuck in pool that nobody can claim). With the fix, diff should be tiny.
+    const tolerance = BigInt(100_000); // 100K lamports for WAD rounding
+    if (diff > tolerance) {
+      throw new Error(`SOL conservation violated: deposited=${totalDeposited}, accounted=${accounted}, diff=${diff}`);
+    }
+
+    // Extra check: pool remaining should be small (just rounding dust, not "dead" SOL)
+    // Dead SOL would be a large amount like 40%+ of deposits
+    const deadThreshold = totalDeposited / BigInt(10); // 10% threshold
+    if (poolRewardsRemaining > deadThreshold) {
+      throw new Error(`Dead SOL detected: ${poolRewardsRemaining} lamports stuck in pool (>${deadThreshold} threshold)`);
+    }
+    console.log('    No dead SOL: OK');
+  });
+
+  // Test: RecoverStrandedRewards doesn't steal from claimable rewards
+  await test('Recovery: does not steal claimable rewards', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(3)); // 3s tau
+
+    const staker = Keypair.generate();
+    await airdropAndConfirm(connection, staker.publicKey, 3 * LAMPORTS_PER_SOL);
+
+    const stakerToken = await ctx.createUserTokenAccount(staker.publicKey);
+    await ctx.mintTokens(stakerToken, BigInt(1_000_000_000));
+    await ctx.stake(staker, stakerToken, BigInt(1_000_000_000));
+
+    // Wait for full maturity (~99% weight at 5τ = 15s)
+    console.log('    Waiting 15s for full maturity...');
+    await new Promise(r => setTimeout(r, 15000));
+
+    // Deposit 1 SOL — with single mature staker, they should get nearly all of it
+    const depositAmount = BigInt(LAMPORTS_PER_SOL);
+    await ctx.depositRewards(depositAmount);
+
+    // Read pool state before recovery
+    const stateBefore = await ctx.readPoolState();
+    console.log(`    Before recovery: lastSynced=${stateBefore.lastSyncedLamports}, totalRewardDebt=${stateBefore.totalRewardDebt}`);
+
+    // Call RecoverStrandedRewards
+    await ctx.recoverStrandedRewards();
+
+    const stateAfter = await ctx.readPoolState();
+    const recovered = stateBefore.lastSyncedLamports - stateAfter.lastSyncedLamports;
+    console.log(`    After recovery: lastSynced=${stateAfter.lastSyncedLamports}, recovered=${recovered}`);
+
+    // Now sync to redistribute any recovered amount
+    await ctx.syncRewards();
+
+    // Staker claims all rewards
+    const balBefore = BigInt(await ctx.getBalance(staker.publicKey));
+    await ctx.claimRewards(staker);
+    const balAfter = BigInt(await ctx.getBalance(staker.publicKey));
+    const claimed = balAfter - balBefore + BigInt(5000); // +fee
+
+    console.log(`    Deposited: ${depositAmount}, Claimed: ${claimed}`);
+
+    // Key check: staker should still get nearly all of the deposit (>95%)
+    // Recovery must not have stolen their rewards
+    const claimPercent = Number(claimed * BigInt(100)) / Number(depositAmount);
+    console.log(`    Claim percentage: ${claimPercent.toFixed(1)}%`);
+
+    if (claimed < depositAmount * BigInt(90) / BigInt(100)) {
+      throw new Error(`Recovery stole rewards! Claimed ${claimed} < 90% of deposited ${depositAmount}`);
+    }
+
+    // Fully unstake
+    await ctx.unstake(staker, stakerToken, BigInt(1_000_000_000));
+
+    // Pool should have minimal remaining
+    const poolBalance = BigInt(await ctx.getBalance(ctx.poolPDA));
+    const poolAccountInfo = await connection.getAccountInfo(ctx.poolPDA);
+    const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(poolAccountInfo!.data.length));
+    const remaining = poolBalance - rentExempt;
+
+    console.log(`    Pool remaining after full exit: ${remaining} lamports`);
+    // Should not be significantly negative (overdraw) — pool balance >= rent exempt
+    if (poolBalance < rentExempt) {
+      throw new Error(`Pool overdraw! Balance ${poolBalance} < rent ${rentExempt}`);
+    }
+  });
+
+  // Test: RecoverStrandedRewards is idempotent (second call recovers nothing extra)
+  await test('Recovery: idempotent (second call recovers nothing)', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(5)); // 5s tau
+
+    const staker = Keypair.generate();
+    await airdropAndConfirm(connection, staker.publicKey, 3 * LAMPORTS_PER_SOL);
+
+    const stakerToken = await ctx.createUserTokenAccount(staker.publicKey);
+    await ctx.mintTokens(stakerToken, BigInt(1_000_000_000));
+    await ctx.stake(staker, stakerToken, BigInt(1_000_000_000));
+
+    // Deposit and wait
+    await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL));
+    console.log('    Waiting 10s for maturity...');
+    await new Promise(r => setTimeout(r, 10000));
+
+    // First recovery
+    await ctx.recoverStrandedRewards();
+    const stateAfter1 = await ctx.readPoolState();
+
+    // Second recovery — should be no-op
+    await ctx.recoverStrandedRewards();
+    const stateAfter2 = await ctx.readPoolState();
+
+    console.log(`    After 1st recovery: lastSynced=${stateAfter1.lastSyncedLamports}`);
+    console.log(`    After 2nd recovery: lastSynced=${stateAfter2.lastSyncedLamports}`);
+
+    if (stateAfter1.lastSyncedLamports !== stateAfter2.lastSyncedLamports) {
+      throw new Error(`Recovery not idempotent: ${stateAfter1.lastSyncedLamports} -> ${stateAfter2.lastSyncedLamports}`);
+    }
+    console.log('    Idempotent: OK');
+  });
+
+  // Test: total_reward_debt is tracked correctly through stake/claim/unstake lifecycle
+  await test('Recovery: total_reward_debt tracking across lifecycle', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(3)); // 3s tau
+
+    // Verify total_reward_debt starts at 0
+    let state = await ctx.readPoolState();
+    if (state.totalRewardDebt !== BigInt(0)) {
+      throw new Error(`Expected initial totalRewardDebt=0, got ${state.totalRewardDebt}`);
+    }
+
+    const staker1 = Keypair.generate();
+    const staker2 = Keypair.generate();
+    await airdropAndConfirm(connection, staker1.publicKey, 3 * LAMPORTS_PER_SOL);
+    await airdropAndConfirm(connection, staker2.publicKey, 3 * LAMPORTS_PER_SOL);
+
+    const token1 = await ctx.createUserTokenAccount(staker1.publicKey);
+    const token2 = await ctx.createUserTokenAccount(staker2.publicKey);
+    await ctx.mintTokens(token1, BigInt(2_000_000_000));
+    await ctx.mintTokens(token2, BigInt(1_000_000_000));
+
+    // Stake staker1 first, deposit rewards, then stake staker2 (so staker2 has non-zero reward_debt)
+    await ctx.stake(staker1, token1, BigInt(1_000_000_000));
+    state = await ctx.readPoolState();
+    const debtAfterStake1 = state.totalRewardDebt;
+    console.log(`    After staker1 stake: totalRewardDebt=${debtAfterStake1}`);
+
+    // Deposit rewards so acc_rps > 0 before staker2 stakes
+    await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL));
+    console.log('    Waiting 10s for maturity...');
+    await new Promise(r => setTimeout(r, 10000));
+
+    // Sync so acc_rps reflects deposits
+    await ctx.syncRewards();
+
+    await ctx.stake(staker2, token2, BigInt(1_000_000_000));
+    state = await ctx.readPoolState();
+    const debtAfterStake2 = state.totalRewardDebt;
+    console.log(`    After staker2 stake: totalRewardDebt=${debtAfterStake2}`);
+
+    // total_reward_debt should increase (staker2 stakes with non-zero acc_rps → non-zero reward_debt)
+    if (debtAfterStake2 <= debtAfterStake1) {
+      throw new Error(`totalRewardDebt should increase after new stake with deposits: ${debtAfterStake1} -> ${debtAfterStake2}`);
+    }
+
+    // Claim — should increase total_reward_debt
+    const debtBeforeClaim = (await ctx.readPoolState()).totalRewardDebt;
+    await ctx.claimRewards(staker1);
+    const debtAfterClaim = (await ctx.readPoolState()).totalRewardDebt;
+    console.log(`    After staker1 claim: totalRewardDebt=${debtBeforeClaim} -> ${debtAfterClaim}`);
+
+    if (debtAfterClaim <= debtBeforeClaim) {
+      throw new Error(`totalRewardDebt should increase after claim`);
+    }
+
+    // Additional stake — should update total_reward_debt (subtract old, add new)
+    const debtBeforeAddStake = (await ctx.readPoolState()).totalRewardDebt;
+    await ctx.stake(staker1, token1, BigInt(500_000_000));
+    const debtAfterAddStake = (await ctx.readPoolState()).totalRewardDebt;
+    console.log(`    After staker1 additional stake: totalRewardDebt=${debtBeforeAddStake} -> ${debtAfterAddStake}`);
+
+    // Full unstake — should subtract staker2's reward_debt
+    const debtBeforeUnstake = (await ctx.readPoolState()).totalRewardDebt;
+    await ctx.unstake(staker2, token2, BigInt(1_000_000_000));
+    const debtAfterUnstake = (await ctx.readPoolState()).totalRewardDebt;
+    console.log(`    After staker2 full unstake: totalRewardDebt=${debtBeforeUnstake} -> ${debtAfterUnstake}`);
+
+    // After staker2 fully unstaked (reward_debt=0), total_reward_debt should decrease
+    if (debtAfterUnstake >= debtBeforeUnstake) {
+      throw new Error(`totalRewardDebt should decrease after full unstake: ${debtBeforeUnstake} -> ${debtAfterUnstake}`);
+    }
+
+    // Cleanup: staker1 unstakes
+    await ctx.unstake(staker1, token1, BigInt(1_500_000_000));
+
+    console.log('    total_reward_debt tracking: OK');
+  });
+
+  // Test: Multi-staker SOL accounting — sum of all claims never exceeds deposits
+  await test('Conservation: multi-staker claims never exceed deposits', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(3)); // 3s tau
+
+    const stakers: Keypair[] = [];
+    const tokens: PublicKey[] = [];
+    const numStakers = 4;
+
+    for (let i = 0; i < numStakers; i++) {
+      const s = Keypair.generate();
+      await airdropAndConfirm(connection, s.publicKey, 3 * LAMPORTS_PER_SOL);
+      const t = await ctx.createUserTokenAccount(s.publicKey);
+      const amount = BigInt((i + 1) * 1_000_000_000); // 1B, 2B, 3B, 4B
+      await ctx.mintTokens(t, amount);
+      await ctx.stake(s, t, amount);
+      stakers.push(s);
+      tokens.push(t);
+    }
+
+    let totalDeposited = BigInt(0);
+
+    // Phase 1: deposit, wait, claim
+    await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL));
+    totalDeposited += BigInt(LAMPORTS_PER_SOL);
+
+    console.log('    Waiting 6s...');
+    await new Promise(r => setTimeout(r, 6000));
+
+    // Staker 0 does additional stake (auto-claims rewards — track SOL)
+    await ctx.mintTokens(tokens[0], BigInt(500_000_000));
+    let autoClaimBal = BigInt(await ctx.getBalance(stakers[0].publicKey));
+    await ctx.stake(stakers[0], tokens[0], BigInt(500_000_000));
+    let autoClaimBalAfter = BigInt(await ctx.getBalance(stakers[0].publicKey));
+    let autoClaimedSOL = autoClaimBalAfter - autoClaimBal + BigInt(5000); // +5000 for tx fee
+    if (autoClaimedSOL < BigInt(0)) autoClaimedSOL = BigInt(0);
+
+    // Phase 2: more deposits
+    await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL));
+    totalDeposited += BigInt(LAMPORTS_PER_SOL);
+
+    console.log('    Waiting 6s...');
+    await new Promise(r => setTimeout(r, 6000));
+
+    // Recovery — pick up any rounding dust
+    await ctx.recoverStrandedRewards();
+    await ctx.syncRewards();
+
+    // Phase 3: everyone claims and unstakes
+    let totalClaimed = autoClaimedSOL;
+    for (let i = 0; i < numStakers; i++) {
+      // Claim
+      const bal = BigInt(await ctx.getBalance(stakers[i].publicKey));
+      try { await ctx.claimRewards(stakers[i]); } catch (e) { /* may have no pending */ }
+      const balAfterClaim = BigInt(await ctx.getBalance(stakers[i].publicKey));
+      totalClaimed += (balAfterClaim - bal + BigInt(5000));
+
+      // Unstake — get the staked amount
+      const stakeAmount = i === 0
+        ? BigInt(1_500_000_000) // 1B + 500M
+        : BigInt((i + 1) * 1_000_000_000);
+      const balBeforeUnstake = BigInt(await ctx.getBalance(stakers[i].publicKey));
+      await ctx.unstake(stakers[i], tokens[i], stakeAmount);
+      const balAfterUnstake = BigInt(await ctx.getBalance(stakers[i].publicKey));
+      // Count only the reward portion of unstake (unstake also claims rewards)
+      totalClaimed += (balAfterUnstake - balBeforeUnstake + BigInt(5000));
+    }
+
+    const poolBalance = BigInt(await ctx.getBalance(ctx.poolPDA));
+    const poolAccountInfo = await connection.getAccountInfo(ctx.poolPDA);
+    const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(poolAccountInfo!.data.length));
+    const poolRemaining = poolBalance - rentExempt;
+    const accounted = totalClaimed + poolRemaining;
+
+    console.log(`    Deposited:     ${totalDeposited}`);
+    console.log(`    Total claimed: ${totalClaimed}`);
+    console.log(`    Pool remaining: ${poolRemaining}`);
+    console.log(`    Accounted:     ${accounted}`);
+
+    // Claims must never exceed deposits (no SOL created from nothing)
+    if (totalClaimed > totalDeposited + BigInt(50_000)) {
+      throw new Error(`Over-distribution! Claimed ${totalClaimed} > deposited ${totalDeposited}`);
+    }
+
+    // Conservation check
+    const diff = accounted > totalDeposited
+      ? accounted - totalDeposited
+      : totalDeposited - accounted;
+    const tolerance = BigInt(100_000);
+    if (diff > tolerance) {
+      throw new Error(`SOL conservation violated: diff=${diff} > tolerance=${tolerance}`);
+    }
+
+    // No large amount of dead SOL
+    if (poolRemaining > totalDeposited / BigInt(10)) {
+      throw new Error(`Dead SOL detected: ${poolRemaining} stuck in pool`);
+    }
+
+    console.log(`    Conservation OK (diff=${diff} lamports)`);
+  });
+
+  // Test: RecoverStrandedRewards bounded — pool lamports never go below rent exempt
+  await test('Recovery: pool balance stays above rent exempt', async () => {
+    const ctx = new TestContext(connection, Keypair.generate());
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(5));
+
+    const staker = Keypair.generate();
+    await airdropAndConfirm(connection, staker.publicKey, 3 * LAMPORTS_PER_SOL);
+
+    const stakerToken = await ctx.createUserTokenAccount(staker.publicKey);
+    await ctx.mintTokens(stakerToken, BigInt(1_000_000_000));
+    await ctx.stake(staker, stakerToken, BigInt(1_000_000_000));
+
+    // Deposit a tiny amount of rewards
+    await ctx.depositRewards(BigInt(10_000)); // 10K lamports
+
+    console.log('    Waiting 10s...');
+    await new Promise(r => setTimeout(r, 10000));
+
+    // Claim everything
+    await ctx.claimRewards(staker);
+
+    // Now call recovery — pool has near-zero rewards left
+    // This should NOT make pool insolvent
+    await ctx.recoverStrandedRewards();
+
+    const poolBalance = BigInt(await ctx.getBalance(ctx.poolPDA));
+    const poolAccountInfo = await connection.getAccountInfo(ctx.poolPDA);
+    const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(poolAccountInfo!.data.length));
+
+    console.log(`    Pool balance: ${poolBalance}, rent exempt: ${rentExempt}`);
+    if (poolBalance < rentExempt) {
+      throw new Error(`Pool went below rent exempt! Balance ${poolBalance} < ${rentExempt}`);
+    }
+
+    // Unstake to clean up
+    await ctx.unstake(staker, stakerToken, BigInt(1_000_000_000));
+    console.log('    Pool solvency: OK');
   });
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
