@@ -13,7 +13,12 @@ use solana_program::{
     sysvar::Sysvar,
 };
 use spl_token_2022::{
-    extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions},
+    extension::{
+        permanent_delegate::PermanentDelegate,
+        transfer_fee::TransferFeeConfig,
+        transfer_hook::TransferHook,
+        BaseStateWithExtensions, StateWithExtensions,
+    },
     state::Mint,
 };
 
@@ -44,16 +49,24 @@ pub fn process_initialize_pool(
     let token_vault_info = next_account_info(account_info_iter)?;
     let authority_info = next_account_info(account_info_iter)?;
     let system_program_info = next_account_info(account_info_iter)?;
-    let _token_program_info = next_account_info(account_info_iter)?;
+    let token_program_info = next_account_info(account_info_iter)?;
     let rent_sysvar_info = next_account_info(account_info_iter)?;
+
+    // Validate Token 2022 program
+    if *token_program_info.key != spl_token_2022::id() {
+        return Err(StakingError::InvalidTokenProgram.into());
+    }
 
     // Validate authority is signer
     if !authority_info.is_signer {
         return Err(StakingError::MissingRequiredSigner.into());
     }
 
-    // Validate tau_seconds
-    if tau_seconds == 0 {
+    // Validate tau_seconds (min 60s to prevent near-instant maturation,
+    // max ~10 years to ensure weights eventually mature)
+    const MIN_TAU_SECONDS: u64 = 60;
+    const MAX_TAU_SECONDS: u64 = 10 * 365 * 24 * 60 * 60; // ~10 years
+    if tau_seconds < MIN_TAU_SECONDS || tau_seconds > MAX_TAU_SECONDS {
         return Err(StakingError::InvalidTau.into());
     }
 
@@ -72,6 +85,22 @@ pub fn process_initialize_pool(
     if mint_state.get_extension::<TransferFeeConfig>().is_ok() {
         msg!("Token 2022 mints with TransferFee extension are not supported");
         return Err(StakingError::InvalidPoolMint.into());
+    }
+
+    // Reject mints with PermanentDelegate — the delegate can transfer tokens
+    // out of the vault at any time, breaking the total_staked invariant and
+    // enabling theft of all staked tokens.
+    if mint_state.get_extension::<PermanentDelegate>().is_ok() {
+        msg!("Token 2022 mints with PermanentDelegate extension are not supported");
+        return Err(StakingError::UnsupportedMintExtension.into());
+    }
+
+    // Reject mints with TransferHook — allows arbitrary program execution
+    // during every transfer CPI (stake/unstake), which could manipulate
+    // state or extract MEV.
+    if mint_state.get_extension::<TransferHook>().is_ok() {
+        msg!("Token 2022 mints with TransferHook extension are not supported");
+        return Err(StakingError::UnsupportedMintExtension.into());
     }
 
     // Derive and verify pool PDA

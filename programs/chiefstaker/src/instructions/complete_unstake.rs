@@ -13,6 +13,7 @@ use crate::{
     error::StakingError,
     state::{StakingPool, UserStake},
 };
+use spl_token_2022;
 
 use super::unstake::execute_unstake;
 
@@ -38,7 +39,12 @@ pub fn process_complete_unstake(
     let user_token_info = next_account_info(account_info_iter)?;
     let mint_info = next_account_info(account_info_iter)?;
     let user_info = next_account_info(account_info_iter)?;
-    let _token_program_info = next_account_info(account_info_iter)?;
+    let token_program_info = next_account_info(account_info_iter)?;
+
+    // Validate Token 2022 program
+    if *token_program_info.key != spl_token_2022::id() {
+        return Err(StakingError::InvalidTokenProgram.into());
+    }
 
     // Validate user is signer
     if !user_info.is_signer {

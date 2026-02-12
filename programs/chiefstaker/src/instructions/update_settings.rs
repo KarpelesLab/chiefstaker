@@ -19,6 +19,11 @@ const MAX_LOCK_DURATION_SECONDS: u64 = 365 * 24 * 60 * 60;
 /// Maximum unstake cooldown: 30 days.
 const MAX_UNSTAKE_COOLDOWN_SECONDS: u64 = 30 * 24 * 60 * 60;
 
+/// Maximum min_stake_amount: 10^15 base units.
+/// Prevents authority from setting it so high that new staking is effectively blocked.
+/// (10^15 = 1M tokens at 9 decimals, generous for any realistic mint.)
+const MAX_MIN_STAKE_AMOUNT: u64 = 1_000_000_000_000_000;
+
 /// Update pool settings (authority only)
 ///
 /// Accounts:
@@ -68,6 +73,9 @@ pub fn process_update_pool_settings(
 
     // Apply settings (with caps to prevent authority abuse)
     if let Some(val) = min_stake_amount {
+        if val > MAX_MIN_STAKE_AMOUNT {
+            return Err(StakingError::SettingExceedsMaximum.into());
+        }
         pool.min_stake_amount = val;
         msg!("Updated min_stake_amount to {}", val);
     }

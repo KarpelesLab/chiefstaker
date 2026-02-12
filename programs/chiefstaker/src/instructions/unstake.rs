@@ -107,14 +107,17 @@ pub fn execute_unstake<'a>(
         .saturating_sub(user_stake.reward_debt);
     let total_stranded_wad = max_pending_wad.saturating_sub(actual_pending_wad);
 
-    // For partial unstake, only return the proportion being unstaked
+    // For partial unstake, only return the proportion being unstaked.
+    // Use U256 intermediate to prevent u128 overflow when total_stranded_wad * amount
+    // exceeds u128 range (possible with large rewards and large stakes).
     let stranded_wad = if amount == user_stake.amount {
         total_stranded_wad
     } else {
-        total_stranded_wad
-            .checked_mul(amount as u128)
+        let stranded_u256 = U256::from_u128(total_stranded_wad)
+            .checked_mul(U256::from_u128(amount as u128))
             .ok_or(StakingError::MathOverflow)?
-            / (user_stake.amount as u128)
+            / U256::from_u128(user_stake.amount as u128);
+        stranded_u256.to_u128().ok_or(StakingError::MathOverflow)?
     };
 
     let stranded_lamports = (stranded_wad / WAD) as u64;
@@ -157,7 +160,10 @@ pub fn execute_unstake<'a>(
         // Subtract unpaid rewards so they remain claimable
         user_stake.reward_debt = base_debt.saturating_sub(unpaid_rewards_wad);
     } else {
-        user_stake.reward_debt = 0;
+        // Full unstake: preserve any unpaid rewards in reward_debt so the user
+        // can claim them later via the amount==0 claim path. When amount==0,
+        // reward_debt is reinterpreted as "unclaimed WAD-scaled rewards".
+        user_stake.reward_debt = unpaid_rewards_wad;
     }
 
     // Update pool-level aggregate: subtract old, add new (saturating for bootstrapping)
@@ -245,7 +251,12 @@ pub fn process_unstake(
     let user_token_info = next_account_info(account_info_iter)?;
     let mint_info = next_account_info(account_info_iter)?;
     let user_info = next_account_info(account_info_iter)?;
-    let _token_program_info = next_account_info(account_info_iter)?;
+    let token_program_info = next_account_info(account_info_iter)?;
+
+    // Validate Token 2022 program
+    if *token_program_info.key != spl_token_2022::id() {
+        return Err(StakingError::InvalidTokenProgram.into());
+    }
 
     // Validate user is signer
     if !user_info.is_signer {

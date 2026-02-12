@@ -96,6 +96,12 @@ pub enum StakingError {
 
     #[error("User stake account still has balance or pending requests")]
     AccountNotEmpty,
+
+    #[error("Invalid Token 2022 program")]
+    InvalidTokenProgram,
+
+    #[error("Token mint has a dangerous extension (PermanentDelegate, TransferHook, etc.)")]
+    UnsupportedMintExtension,
 }
 
 impl From<StakingError> for ProgramError {

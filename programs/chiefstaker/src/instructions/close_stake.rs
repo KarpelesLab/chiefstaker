@@ -73,8 +73,13 @@ pub fn process_close_stake_account(
         return Err(StakingError::InvalidPDA.into());
     }
 
-    // Account must be empty: no staked tokens and no pending unstake request
-    if user_stake.amount > 0 || user_stake.has_pending_unstake_request() {
+    // Account must be empty: no staked tokens, no pending unstake request,
+    // and no residual unclaimed rewards (reward_debt stores unclaimed WAD-scaled
+    // rewards after a full unstake when the pool lacked SOL).
+    if user_stake.amount > 0
+        || user_stake.has_pending_unstake_request()
+        || user_stake.reward_debt > 0
+    {
         return Err(StakingError::AccountNotEmpty.into());
     }
 

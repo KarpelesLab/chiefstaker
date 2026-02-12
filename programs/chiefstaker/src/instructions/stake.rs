@@ -49,7 +49,12 @@ pub fn process_stake(
     let mint_info = next_account_info(account_info_iter)?;
     let user_info = next_account_info(account_info_iter)?;
     let system_program_info = next_account_info(account_info_iter)?;
-    let _token_program_info = next_account_info(account_info_iter)?;
+    let token_program_info = next_account_info(account_info_iter)?;
+
+    // Validate Token 2022 program
+    if *token_program_info.key != spl_token_2022::id() {
+        return Err(StakingError::InvalidTokenProgram.into());
+    }
 
     // Validate user is signer
     if !user_info.is_signer {

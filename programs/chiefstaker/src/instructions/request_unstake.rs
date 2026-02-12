@@ -56,6 +56,11 @@ pub fn process_request_unstake(
         return Err(StakingError::InvalidPDA.into());
     }
 
+    // Check if pool needs rebasing
+    if pool.get_sum_stake_exp().needs_rebase() {
+        return Err(StakingError::PoolRequiresSync.into());
+    }
+
     // Require cooldown to be configured; otherwise use direct Unstake
     if pool.unstake_cooldown_seconds == 0 {
         return Err(StakingError::CooldownNotConfigured.into());
