@@ -1,8 +1,9 @@
 {
-  "version": "0.1.0",
-  "name": "chiefstaker",
+  "address": "3Ecf8gyRURyrBtGHS1XAVXyQik5PqgDch4VkxrH4ECcr",
   "metadata": {
-    "address": "3Ecf8gyRURyrBtGHS1XAVXyQik5PqgDch4VkxrH4ECcr",
+    "name": "chiefstaker",
+    "version": "0.1.0",
+    "spec": "0.1.0",
     "origin": "native",
     "serialization": "borsh",
     "description": "Token 2022 staking with time-weighted rewards. Uses Borsh enum discriminators (single u8 variant index), NOT Anchor 8-byte sighashes."
@@ -18,44 +19,37 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account (PDA: [\"pool\", mint])"]
         },
         {
           "name": "mint",
-          "isMut": false,
-          "isSigner": false,
           "docs": ["Token mint (Token 2022)"]
         },
         {
           "name": "tokenVault",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Token vault (PDA: [\"token_vault\", pool])"]
         },
         {
           "name": "authority",
-          "isMut": true,
-          "isSigner": true,
+          "writable": true,
+          "signer": true,
           "docs": ["Authority / payer"]
         },
         {
           "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
+          "address": "11111111111111111111111111111111",
           "docs": ["System program"]
         },
         {
           "name": "tokenProgram",
-          "isMut": false,
-          "isSigner": false,
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
           "docs": ["Token 2022 program"]
         },
         {
           "name": "rent",
-          "isMut": false,
-          "isSigner": false,
+          "address": "SysvarRent111111111111111111111111111111111",
           "docs": ["Rent sysvar"]
         }
       ],
@@ -76,50 +70,42 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account"]
         },
         {
           "name": "userStake",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["User stake account (PDA: [\"stake\", pool, owner])"]
         },
         {
           "name": "tokenVault",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Token vault"]
         },
         {
           "name": "userTokenAccount",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["User token account"]
         },
         {
           "name": "mint",
-          "isMut": false,
-          "isSigner": false,
           "docs": ["Token mint"]
         },
         {
           "name": "owner",
-          "isMut": true,
-          "isSigner": true,
+          "writable": true,
+          "signer": true,
           "docs": ["User / owner"]
         },
         {
           "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
+          "address": "11111111111111111111111111111111",
           "docs": ["System program"]
         },
         {
           "name": "tokenProgram",
-          "isMut": false,
-          "isSigner": false,
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
           "docs": ["Token 2022 program"]
         }
       ],
@@ -141,44 +127,37 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account"]
         },
         {
           "name": "userStake",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["User stake account"]
         },
         {
           "name": "tokenVault",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Token vault"]
         },
         {
           "name": "userTokenAccount",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["User token account"]
         },
         {
           "name": "mint",
-          "isMut": false,
-          "isSigner": false,
           "docs": ["Token mint"]
         },
         {
           "name": "owner",
-          "isMut": true,
-          "isSigner": true,
+          "writable": true,
+          "signer": true,
           "docs": ["User / owner"]
         },
         {
           "name": "tokenProgram",
-          "isMut": false,
-          "isSigner": false,
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
           "docs": ["Token 2022 program"]
         }
       ],
@@ -199,20 +178,18 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account (holds SOL rewards)"]
         },
         {
           "name": "userStake",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["User stake account"]
         },
         {
           "name": "owner",
-          "isMut": true,
-          "isSigner": true,
+          "writable": true,
+          "signer": true,
           "docs": ["User / owner"]
         }
       ],
@@ -228,20 +205,18 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account (receives SOL)"]
         },
         {
           "name": "depositor",
-          "isMut": true,
-          "isSigner": true,
+          "writable": true,
+          "signer": true,
           "docs": ["Depositor"]
         },
         {
           "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
+          "address": "11111111111111111111111111111111",
           "docs": ["System program"]
         }
       ],
@@ -262,8 +237,7 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account"]
         }
       ],
@@ -280,8 +254,7 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account"]
         }
       ],
@@ -298,14 +271,12 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account"]
         },
         {
           "name": "authority",
-          "isMut": false,
-          "isSigner": true,
+          "signer": true,
           "docs": ["Pool authority"]
         }
       ],
@@ -340,21 +311,19 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account"]
         },
         {
           "name": "authority",
-          "isMut": false,
-          "isSigner": true,
+          "signer": true,
           "docs": ["Current authority"]
         }
       ],
       "args": [
         {
           "name": "newAuthority",
-          "type": "publicKey"
+          "type": "pubkey"
         }
       ]
     },
@@ -368,20 +337,17 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account"]
         },
         {
           "name": "userStake",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["User stake account"]
         },
         {
           "name": "owner",
-          "isMut": false,
-          "isSigner": true,
+          "signer": true,
           "docs": ["User / owner"]
         }
       ],
@@ -402,44 +368,37 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account"]
         },
         {
           "name": "userStake",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["User stake account"]
         },
         {
           "name": "tokenVault",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Token vault"]
         },
         {
           "name": "userTokenAccount",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["User token account"]
         },
         {
           "name": "mint",
-          "isMut": false,
-          "isSigner": false,
           "docs": ["Token mint"]
         },
         {
           "name": "owner",
-          "isMut": true,
-          "isSigner": true,
+          "writable": true,
+          "signer": true,
           "docs": ["User / owner"]
         },
         {
           "name": "tokenProgram",
-          "isMut": false,
-          "isSigner": false,
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
           "docs": ["Token 2022 program"]
         }
       ],
@@ -455,20 +414,16 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": false,
-          "isSigner": false,
           "docs": ["Pool account"]
         },
         {
           "name": "userStake",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["User stake account"]
         },
         {
           "name": "owner",
-          "isMut": false,
-          "isSigner": true,
+          "signer": true,
           "docs": ["User / owner"]
         }
       ],
@@ -484,20 +439,17 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": false,
-          "isSigner": false,
           "docs": ["Pool account"]
         },
         {
           "name": "userStake",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["User stake account"]
         },
         {
           "name": "owner",
-          "isMut": true,
-          "isSigner": true,
+          "writable": true,
+          "signer": true,
           "docs": ["User / owner (receives rent refund)"]
         }
       ],
@@ -514,8 +466,7 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Pool account"]
         }
       ],
@@ -534,32 +485,26 @@
       "accounts": [
         {
           "name": "pool",
-          "isMut": false,
-          "isSigner": false,
           "docs": ["Pool account"]
         },
         {
           "name": "metadata",
-          "isMut": true,
-          "isSigner": false,
+          "writable": true,
           "docs": ["Metadata PDA ([\"metadata\", pool])"]
         },
         {
           "name": "mint",
-          "isMut": false,
-          "isSigner": false,
           "docs": ["Token mint (must have TokenMetadata extension)"]
         },
         {
           "name": "payer",
-          "isMut": true,
-          "isSigner": true,
+          "writable": true,
+          "signer": true,
           "docs": ["Payer (pays rent on first call)"]
         },
         {
           "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
+          "address": "11111111111111111111111111111111",
           "docs": ["System program"]
         }
       ],
@@ -569,7 +514,20 @@
   "accounts": [
     {
       "name": "StakingPool",
-      "discriminator": [199, 95, 126, 45, 59, 26, 156, 78],
+      "discriminator": [199, 95, 126, 45, 59, 26, 156, 78]
+    },
+    {
+      "name": "UserStake",
+      "discriminator": [163, 139, 93, 47, 124, 74, 30, 157]
+    },
+    {
+      "name": "PoolMetadata",
+      "discriminator": [212, 42, 143, 107, 81, 60, 231, 144]
+    }
+  ],
+  "types": [
+    {
+      "name": "StakingPool",
       "docs": [
         "Staking pool state account.",
         "PDA seeds: [\"pool\", mint].",
@@ -587,22 +545,22 @@
           },
           {
             "name": "mint",
-            "type": "publicKey",
+            "type": "pubkey",
             "docs": ["Token 2022 mint address"]
           },
           {
             "name": "tokenVault",
-            "type": "publicKey",
+            "type": "pubkey",
             "docs": ["PDA holding staked tokens"]
           },
           {
             "name": "rewardVault",
-            "type": "publicKey",
+            "type": "pubkey",
             "docs": ["DEPRECATED: No longer used (pool PDA holds SOL directly). Retained for layout compatibility."]
           },
           {
             "name": "authority",
-            "type": "publicKey",
+            "type": "pubkey",
             "docs": ["Admin authority who initialized the pool"]
           },
           {
@@ -682,11 +640,10 @@
     },
     {
       "name": "UserStake",
-      "discriminator": [163, 139, 93, 47, 124, 74, 30, 157],
       "docs": [
         "User stake account.",
         "PDA seeds: [\"stake\", pool, owner].",
-        "Size: 153 bytes."
+        "Size: 177 bytes (legacy accounts at 153 or 161 bytes are lazily reallocated)."
       ],
       "type": {
         "kind": "struct",
@@ -700,12 +657,12 @@
           },
           {
             "name": "owner",
-            "type": "publicKey",
+            "type": "pubkey",
             "docs": ["Owner of this stake"]
           },
           {
             "name": "pool",
-            "type": "publicKey",
+            "type": "pubkey",
             "docs": ["Pool this stake belongs to"]
           },
           {
@@ -726,7 +683,7 @@
           {
             "name": "rewardDebt",
             "type": "u128",
-            "docs": ["Reward debt for pending reward calculation (WAD-scaled). When amount > 0: reward_debt = amount_wad * acc_rps at last update. When amount == 0: reinterpreted as unclaimed WAD-scaled rewards from a full unstake."]
+            "docs": ["Reward debt snapshot for pending reward calculation (WAD-scaled). When amount > 0: encodes acc_rps snapshot at last position restructure. When amount == 0: reinterpreted as unclaimed WAD-scaled rewards from a full unstake."]
           },
           {
             "name": "bump",
@@ -752,13 +709,22 @@
             "name": "baseTimeSnapshot",
             "type": "i64",
             "docs": ["Pool base_time when exp_start_factor was last calibrated. 0 = legacy account (pre-rebase-aware)."]
+          },
+          {
+            "name": "totalRewardsClaimed",
+            "type": "u64",
+            "docs": ["Cumulative SOL rewards claimed by this user (lamports). Defaults to 0 for legacy accounts."]
+          },
+          {
+            "name": "claimedRewardsWad",
+            "type": "u128",
+            "docs": ["Cumulative WAD-scaled rewards already paid for the current position. Used for frequency-independent claims: pending = full_entitlement - claimedRewardsWad. Reset to 0 on stake/unstake. Defaults to 0 for legacy accounts."]
           }
         ]
       }
     },
     {
       "name": "PoolMetadata",
-      "discriminator": [212, 42, 143, 107, 81, 60, 231, 144],
       "docs": [
         "Pool metadata account for explorer display.",
         "PDA seeds: [\"metadata\", pool].",
@@ -776,7 +742,7 @@
           },
           {
             "name": "pool",
-            "type": "publicKey",
+            "type": "pubkey",
             "docs": ["Back-reference to staking pool"]
           },
           {
@@ -820,7 +786,7 @@
             "type": {
               "array": ["u8", 128]
             },
-            "docs": ["UTF-8 URL, zero-padded (e.g. https://labs.chiefpussy.com/staking/<mint>)"]
+            "docs": ["UTF-8 URL, zero-padded"]
           },
           {
             "name": "memberCount",
@@ -1002,6 +968,5 @@
       "name": "UnsupportedMintExtension",
       "msg": "Token mint has a dangerous extension (PermanentDelegate, TransferHook, etc.)"
     }
-  ],
-  "types": []
+  ]
 }
