@@ -14,9 +14,7 @@ use spl_token_2022::extension::StateWithExtensions;
 
 use crate::{
     error::StakingError,
-    math::{
-        calculate_total_weighted_stake, calculate_user_weighted_stake, wad_mul, U256, WAD,
-    },
+    math::{calculate_user_weighted_stake, wad_div, wad_mul, U256, WAD},
     state::{StakingPool, UserStake, POOL_SEED},
 };
 
@@ -47,14 +45,6 @@ pub fn execute_unstake<'a>(
     // is not a CPI account)
     let mut reward_transfer_amount: u64 = 0;
 
-    let total_weighted = calculate_total_weighted_stake(
-        pool.total_staked,
-        &pool.get_sum_stake_exp(),
-        current_time,
-        pool.base_time,
-        pool.tau_seconds,
-    )?;
-
     let user_weighted = calculate_user_weighted_stake(
         user_stake.amount,
         user_stake.exp_start_factor,
@@ -65,12 +55,15 @@ pub fn execute_unstake<'a>(
 
     // Track unpaid rewards (WAD-scaled) to carry forward in reward_debt
     let mut unpaid_rewards_wad: u128 = 0;
-    let mut actual_pending_wad: u128 = 0;
 
-    if total_weighted > 0 && user_weighted > 0 {
-        let pending = wad_mul(user_weighted, pool.acc_reward_per_weighted_share)?
-            .saturating_sub(user_stake.reward_debt);
-        actual_pending_wad = pending;
+    if user_weighted > 0 && pool.acc_reward_per_weighted_share > 0 {
+        // Snapshot-delta: pending = user_weighted * (acc_rps - snapshot)
+        let amount_wad = (user_stake.amount as u128)
+            .checked_mul(WAD)
+            .ok_or(StakingError::MathOverflow)?;
+        let snapshot = wad_div(user_stake.reward_debt, amount_wad)?;
+        let delta_rps = pool.acc_reward_per_weighted_share.saturating_sub(snapshot);
+        let pending = wad_mul(user_weighted, delta_rps)?;
 
         if pending > 0 {
             let pending_lamports = pending / WAD;
@@ -95,35 +88,6 @@ pub fn execute_unstake<'a>(
                 }
             }
         }
-    }
-
-    // Calculate stranded rewards: allocated at max weight but not claimable at actual weight.
-    // Return them to the pool (via last_synced_lamports) so the next sync_rewards
-    // redistributes them to remaining stakers.
-    let amount_wad_full = (user_stake.amount as u128)
-        .checked_mul(WAD)
-        .ok_or(StakingError::MathOverflow)?;
-    let max_pending_wad = wad_mul(amount_wad_full, pool.acc_reward_per_weighted_share)?
-        .saturating_sub(user_stake.reward_debt);
-    let total_stranded_wad = max_pending_wad.saturating_sub(actual_pending_wad);
-
-    // For partial unstake, only return the proportion being unstaked.
-    // Use U256 intermediate to prevent u128 overflow when total_stranded_wad * amount
-    // exceeds u128 range (possible with large rewards and large stakes).
-    let stranded_wad = if amount == user_stake.amount {
-        total_stranded_wad
-    } else {
-        let stranded_u256 = U256::from_u128(total_stranded_wad)
-            .checked_mul(U256::from_u128(amount as u128))
-            .ok_or(StakingError::MathOverflow)?
-            / U256::from_u128(user_stake.amount as u128);
-        stranded_u256.to_u128().ok_or(StakingError::MathOverflow)?
-    };
-
-    let stranded_lamports = (stranded_wad / WAD) as u64;
-    if stranded_lamports > 0 {
-        pool.last_synced_lamports = pool.last_synced_lamports.saturating_sub(stranded_lamports);
-        msg!("Returned {} stranded lamports for redistribution", stranded_lamports);
     }
 
     // Calculate the unstaked portion's contribution to sum_stake_exp
@@ -151,14 +115,23 @@ pub fn execute_unstake<'a>(
         .checked_sub(amount)
         .ok_or(StakingError::MathUnderflow)?;
 
-    // Recalculate reward debt for remaining stake using max weight, preserving any unpaid rewards
+    // Recalculate reward debt for remaining stake, preserving old snapshot
     if user_stake.amount > 0 {
+        // Recover the snapshot from old reward_debt: snapshot = old_rd / original_amount_wad
+        // Note: user_stake.amount has already been decremented, so original = current + unstaked
+        let original_amount = (user_stake.amount as u128)
+            .checked_add(amount as u128)
+            .ok_or(StakingError::MathOverflow)?;
+        let original_amount_wad = original_amount
+            .checked_mul(WAD)
+            .ok_or(StakingError::MathOverflow)?;
+        let snapshot = wad_div(old_reward_debt, original_amount_wad)?;
         let remaining_amount_wad = (user_stake.amount as u128)
             .checked_mul(WAD)
             .ok_or(StakingError::MathOverflow)?;
-        let base_debt = wad_mul(remaining_amount_wad, pool.acc_reward_per_weighted_share)?;
-        // Subtract unpaid rewards so they remain claimable
-        user_stake.reward_debt = base_debt.saturating_sub(unpaid_rewards_wad);
+        // Re-encode snapshot for remaining amount, subtract unpaid so they remain claimable
+        user_stake.reward_debt = wad_mul(remaining_amount_wad, snapshot)?
+            .saturating_sub(unpaid_rewards_wad);
 
         // Update pool-level aggregate: subtract old, add new (saturating for bootstrapping)
         pool.total_reward_debt = pool

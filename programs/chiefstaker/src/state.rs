@@ -202,8 +202,10 @@ pub struct UserStake {
     /// Used to track contribution to sum_stake_exp
     pub exp_start_factor: u128,
 
-    /// Reward debt for pending reward calculation
-    /// reward_debt = user_weight * acc_reward_per_weighted_share at last update
+    /// Reward debt encoding an acc_rps snapshot for pending reward calculation.
+    /// Encodes: reward_debt = wad_mul(amount * WAD, snapshot_acc_rps).
+    /// Pending = user_weighted * (current_acc_rps - snapshot_acc_rps).
+    /// When amount == 0 (post-full-unstake), reinterpreted as unclaimed WAD-scaled rewards.
     pub reward_debt: u128,
 
     /// PDA bump seed

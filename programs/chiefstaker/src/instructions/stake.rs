@@ -16,7 +16,7 @@ use spl_token_2022::extension::StateWithExtensions;
 
 use crate::{
     error::StakingError,
-    math::{calculate_user_weighted_stake, exp_time_ratio, wad_mul, MAX_EXP_INPUT, U256, WAD},
+    math::{calculate_user_weighted_stake, exp_time_ratio, wad_div, wad_mul, MAX_EXP_INPUT, U256, WAD},
     state::{PoolMetadata, StakingPool, UserStake, STAKE_SEED},
 };
 
@@ -234,7 +234,6 @@ pub fn process_stake(
         // NOTE: Actual SOL transfer is deferred until after the token CPI to avoid
         // Solana's CPI balance check failure (same pattern as execute_unstake).
         let mut unpaid_rewards_wad: u128 = 0;
-        let mut actual_pending_wad: u128 = 0;
         let user_weighted_before = calculate_user_weighted_stake(
             user_stake.amount,
             user_stake.exp_start_factor,
@@ -243,9 +242,13 @@ pub fn process_stake(
             pool.tau_seconds,
         )?;
         if user_weighted_before > 0 && pool.acc_reward_per_weighted_share > 0 {
-            let accumulated = wad_mul(user_weighted_before, pool.acc_reward_per_weighted_share)?;
-            let pending = accumulated.saturating_sub(user_stake.reward_debt);
-            actual_pending_wad = pending;
+            // Snapshot-delta: pending = user_weighted * (acc_rps - snapshot)
+            let old_amount_wad = (user_stake.amount as u128)
+                .checked_mul(WAD)
+                .ok_or(StakingError::MathOverflow)?;
+            let snapshot = wad_div(user_stake.reward_debt, old_amount_wad)?;
+            let delta_rps = pool.acc_reward_per_weighted_share.saturating_sub(snapshot);
+            let pending = wad_mul(user_weighted_before, delta_rps)?;
             if pending > 0 {
                 let pending_lamports = pending / WAD;
                 if pending_lamports > 0 {
@@ -263,25 +266,6 @@ pub fn process_stake(
                         .ok_or(StakingError::MathOverflow)?;
                     unpaid_rewards_wad = pending.saturating_sub(paid_wad);
                 }
-            }
-        }
-
-        // Calculate stranded rewards: allocated at max weight but not yet claimable
-        // at current weight. Return them to the pool (via last_synced_lamports reduction)
-        // so the next sync_rewards redistributes them to all stakers.
-        // Same pattern as execute_unstake's stranded calculation.
-        if pool.acc_reward_per_weighted_share > 0 {
-            let old_amount_wad = (user_stake.amount as u128)
-                .checked_mul(WAD)
-                .ok_or(StakingError::MathOverflow)?;
-            let max_pending_wad = wad_mul(old_amount_wad, pool.acc_reward_per_weighted_share)?
-                .saturating_sub(user_stake.reward_debt);
-            let stranded_wad = max_pending_wad.saturating_sub(actual_pending_wad);
-            let stranded_lamports = (stranded_wad / WAD) as u64;
-            if stranded_lamports > 0 {
-                pool.last_synced_lamports =
-                    pool.last_synced_lamports.saturating_sub(stranded_lamports);
-                msg!("Returned {} stranded lamports for redistribution", stranded_lamports);
             }
         }
 
