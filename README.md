@@ -18,7 +18,15 @@ weight = stake_amount * (1 - e^(-age / tau))
 
 This prevents flash-stake attacks -- you can't just deposit right before a reward distribution and steal rewards from long-term stakers.
 
-SOL rewards are distributed using a max-weight denominator (`total_staked * WAD`) to prevent over-distribution. Each staker's claimable share grows as their weight matures, but can never exceed the deposited amount. Rewards can be deposited directly via instruction or sent to the pool PDA (e.g., from pump.fun fee revenue) and synced.
+SOL rewards are distributed using a **snapshot-delta** formula. When rewards arrive, they are divided by `total_staked * WAD` (max weight) to produce an accumulator increment. Each staker's pending rewards are computed as:
+
+```
+pending = user_weighted * (acc_reward_per_weighted_share - snapshot)
+```
+
+where `snapshot` is the accumulator value at the time of the staker's last action (stake, claim, or unstake). This means claimable rewards start near zero after each action and grow as the staker's weight matures — but can never exceed the deposited amount. Immature (unclaimed) portions stay naturally in the pool and can be redistributed via `RecoverStrandedRewards`.
+
+Rewards can be deposited directly via instruction or sent to the pool PDA (e.g., from pump.fun fee revenue) and synced.
 
 ## Features
 
@@ -54,6 +62,8 @@ SOL rewards are distributed using a max-weight denominator (`total_staked * WAD`
 | 10 | `CompleteUnstake` | Finish unstake after cooldown elapsed |
 | 11 | `CancelUnstakeRequest` | Cancel a pending unstake request |
 | 12 | `CloseStakeAccount` | Close zero-balance stake account to reclaim rent |
+| 13 | `RecoverStrandedRewards` | Redistribute stranded rewards (permissionless) |
+| 14 | `SetPoolMetadata` | Set pool name, tags, and URL (permissionless) |
 
 ## Pool Settings
 
@@ -112,6 +122,8 @@ programs/chiefstaker/src/
     complete_unstake.rs           # CompleteUnstake
     cancel_unstake.rs             # CancelUnstakeRequest
     close_stake.rs                # CloseStakeAccount
+    recover_stranded.rs           # RecoverStrandedRewards
+    set_metadata.rs               # SetPoolMetadata
 tests/typescript/
   test_staking.ts                 # E2E tests
 ```
