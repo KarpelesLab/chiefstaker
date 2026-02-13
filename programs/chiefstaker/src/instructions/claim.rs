@@ -119,14 +119,17 @@ pub fn process_claim_rewards(
             return Ok(());
         }
 
-        // Snapshot-delta: pending = user_weighted * (acc_rps - snapshot)
+        // Full entitlement: user_weighted * (acc_rps - snapshot)
         // where snapshot = reward_debt / (amount * WAD)
         let amount_wad = (user_stake.amount as u128)
             .checked_mul(WAD)
             .ok_or(StakingError::MathOverflow)?;
         let snapshot = wad_div(user_stake.reward_debt, amount_wad)?;
         let delta_rps = pool.acc_reward_per_weighted_share.saturating_sub(snapshot);
-        let p = wad_mul(user_weighted, delta_rps)?;
+        let full_entitlement = wad_mul(user_weighted, delta_rps)?;
+
+        // Subtract already-claimed amount to get pending (frequency-independent)
+        let p = full_entitlement.saturating_sub(user_stake.claimed_rewards_wad);
 
         if p == 0 {
             msg!("No pending rewards to claim");
@@ -170,21 +173,11 @@ pub fn process_claim_rewards(
         // Residual debts are tracked in total_residual_unpaid (not total_reward_debt)
         pool.total_residual_unpaid = pool.total_residual_unpaid.saturating_sub(transfer_amount);
     } else {
-        // Normal claim: reset snapshot to current acc_rps.
-        // The user claimed their weighted share of the acc_rps range up to now.
-        // The immature portion (max_weight - actual_weight allocation) stays in the
-        // pool as stranded rewards, redistributed via RecoverStrandedRewards.
-        // NOT advancing incrementally — that allows repeated claims to extract the
-        // full max-weight amount (geometric series: w + w(1-w) + w(1-w)^2 + ... = 1).
-        let old_reward_debt = user_stake.reward_debt;
-        let amount_wad = (user_stake.amount as u128)
-            .checked_mul(WAD)
-            .ok_or(StakingError::MathOverflow)?;
-        user_stake.reward_debt = wad_mul(amount_wad, pool.acc_reward_per_weighted_share)?;
-        pool.total_reward_debt = pool
-            .total_reward_debt
-            .saturating_sub(old_reward_debt)
-            .checked_add(user_stake.reward_debt)
+        // Track cumulative claimed amount (no snapshot reset).
+        // Snapshot stays fixed so weight maturation isn't forfeited on claim.
+        // Same-block double-claim yields 0: full_entitlement - claimed_rewards_wad = 0.
+        user_stake.claimed_rewards_wad = user_stake.claimed_rewards_wad
+            .checked_add(paid_wad)
             .ok_or(StakingError::MathOverflow)?;
     }
 

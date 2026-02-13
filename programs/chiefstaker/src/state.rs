@@ -229,6 +229,12 @@ pub struct UserStake {
     /// Cumulative SOL rewards claimed by this user (lamports).
     /// Defaults to 0 for legacy 153-byte accounts (populated on first realloc).
     pub total_rewards_claimed: u64,
+
+    /// Cumulative WAD-scaled rewards already paid out for the current position.
+    /// Used to make claims frequency-independent: pending = full_entitlement - claimed_rewards_wad.
+    /// Reset to 0 on stake (add-more) and unstake (partial/full) when the position is restructured.
+    /// Defaults to 0 for existing accounts (correct: first claim gets full pending).
+    pub claimed_rewards_wad: u128,
 }
 
 impl UserStake {
@@ -245,10 +251,11 @@ impl UserStake {
         8 +  // unstake_request_time
         8 +  // last_stake_time
         8 +  // base_time_snapshot
-        8;   // total_rewards_claimed
+        8 +  // total_rewards_claimed
+        16;  // claimed_rewards_wad
 
-    /// Legacy account size (before total_rewards_claimed was added)
-    pub const LEGACY_LEN: usize = Self::LEN - 8;
+    /// Legacy account size (before claimed_rewards_wad was added)
+    pub const LEGACY_LEN: usize = Self::LEN - 16;
 
     /// Create a new user stake
     pub fn new(
@@ -274,6 +281,7 @@ impl UserStake {
             last_stake_time: stake_time,
             base_time_snapshot,
             total_rewards_claimed: 0,
+            claimed_rewards_wad: 0,
         }
     }
 
@@ -353,8 +361,9 @@ impl BorshDeserialize for UserStake {
         let last_stake_time = i64::deserialize_reader(reader)?;
         let base_time_snapshot = i64::deserialize_reader(reader)?;
 
-        // New field — may not be present in legacy 153-byte accounts
+        // New fields — may not be present in legacy accounts
         let total_rewards_claimed = u64::deserialize_reader(reader).unwrap_or(0);
+        let claimed_rewards_wad = u128::deserialize_reader(reader).unwrap_or(0);
 
         Ok(Self {
             discriminator,
@@ -370,6 +379,7 @@ impl BorshDeserialize for UserStake {
             last_stake_time,
             base_time_snapshot,
             total_rewards_claimed,
+            claimed_rewards_wad,
         })
     }
 }
@@ -518,8 +528,8 @@ mod tests {
         );
         let serialized = borsh::to_vec(&stake).unwrap();
         assert_eq!(serialized.len(), UserStake::LEN);
-        assert_eq!(UserStake::LEN, 161);
-        assert_eq!(UserStake::LEGACY_LEN, 153);
+        assert_eq!(UserStake::LEN, 177);
+        assert_eq!(UserStake::LEGACY_LEN, 161);
     }
 
     #[test]
@@ -536,18 +546,27 @@ mod tests {
         );
         let full = borsh::to_vec(&stake).unwrap();
 
-        // Truncate to legacy 153 bytes (no total_rewards_claimed)
+        // Truncate to legacy 161 bytes (no claimed_rewards_wad)
         let legacy = &full[..UserStake::LEGACY_LEN];
 
-        // Deserialize should succeed with total_rewards_claimed defaulting to 0
+        // Deserialize should succeed with claimed_rewards_wad defaulting to 0
         let deserialized = UserStake::try_from_slice(legacy).unwrap();
         assert_eq!(deserialized.amount, 1000);
         assert_eq!(deserialized.total_rewards_claimed, 0);
+        assert_eq!(deserialized.claimed_rewards_wad, 0);
         assert_eq!(deserialized.bump, 255);
 
-        // Full 161-byte deserialization should also work
+        // Very old 153-byte accounts (no total_rewards_claimed or claimed_rewards_wad)
+        let very_old = &full[..153];
+        let deserialized_old = UserStake::try_from_slice(very_old).unwrap();
+        assert_eq!(deserialized_old.amount, 1000);
+        assert_eq!(deserialized_old.total_rewards_claimed, 0);
+        assert_eq!(deserialized_old.claimed_rewards_wad, 0);
+
+        // Full 177-byte deserialization should also work
         let deserialized_full = UserStake::try_from_slice(&full).unwrap();
         assert_eq!(deserialized_full.total_rewards_claimed, 0);
+        assert_eq!(deserialized_full.claimed_rewards_wad, 0);
     }
 
     #[test]
@@ -562,8 +581,10 @@ mod tests {
             12345,
         );
         stake.total_rewards_claimed = 999_999;
+        stake.claimed_rewards_wad = 42_000_000_000_000_000_000;
         let serialized = borsh::to_vec(&stake).unwrap();
         let deserialized = UserStake::try_from_slice(&serialized).unwrap();
         assert_eq!(deserialized.total_rewards_claimed, 999_999);
+        assert_eq!(deserialized.claimed_rewards_wad, 42_000_000_000_000_000_000);
     }
 }

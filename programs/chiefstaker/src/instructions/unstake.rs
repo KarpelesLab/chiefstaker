@@ -58,13 +58,15 @@ pub fn execute_unstake<'a>(
     let mut unpaid_rewards_wad: u128 = 0;
 
     if user_weighted > 0 && pool.acc_reward_per_weighted_share > 0 {
-        // Snapshot-delta: pending = user_weighted * (acc_rps - snapshot)
+        // Full entitlement: user_weighted * (acc_rps - snapshot)
         let amount_wad = (user_stake.amount as u128)
             .checked_mul(WAD)
             .ok_or(StakingError::MathOverflow)?;
         let snapshot = wad_div(user_stake.reward_debt, amount_wad)?;
         let delta_rps = pool.acc_reward_per_weighted_share.saturating_sub(snapshot);
-        let pending = wad_mul(user_weighted, delta_rps)?;
+        let full_entitlement = wad_mul(user_weighted, delta_rps)?;
+        // Subtract already-claimed amount (frequency-independent)
+        let pending = full_entitlement.saturating_sub(user_stake.claimed_rewards_wad);
 
         if pending > 0 {
             let pending_lamports = pending / WAD;
@@ -119,12 +121,12 @@ pub fn execute_unstake<'a>(
     // Recalculate reward debt for remaining stake
     if user_stake.amount > 0 {
         // Reset snapshot to current acc_rps for the remaining position.
-        // Same rationale as claim: prevents repeated-unstake exploit from extracting
-        // max-weight rewards via geometric series.
+        // Position is restructured, so reset both snapshot and claimed tracker.
         let remaining_amount_wad = (user_stake.amount as u128)
             .checked_mul(WAD)
             .ok_or(StakingError::MathOverflow)?;
         user_stake.reward_debt = wad_mul(remaining_amount_wad, pool.acc_reward_per_weighted_share)?;
+        user_stake.claimed_rewards_wad = 0;
 
         // Update pool-level aggregate: subtract old, add new (saturating for bootstrapping)
         pool.total_reward_debt = pool
@@ -137,6 +139,7 @@ pub fn execute_unstake<'a>(
         // can claim them later via the amount==0 claim path. When amount==0,
         // reward_debt is reinterpreted as "unclaimed WAD-scaled rewards".
         user_stake.reward_debt = unpaid_rewards_wad;
+        user_stake.claimed_rewards_wad = 0;
 
         // Remove old debt from total_reward_debt but do NOT add the residual.
         // Residual debts are tracked separately in total_residual_unpaid because

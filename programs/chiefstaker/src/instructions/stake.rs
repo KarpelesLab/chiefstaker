@@ -245,13 +245,15 @@ pub fn process_stake(
             pool.tau_seconds,
         )?;
         if user_weighted_before > 0 && pool.acc_reward_per_weighted_share > 0 {
-            // Snapshot-delta: pending = user_weighted * (acc_rps - snapshot)
+            // Full entitlement: user_weighted * (acc_rps - snapshot)
             let old_amount_wad = (user_stake.amount as u128)
                 .checked_mul(WAD)
                 .ok_or(StakingError::MathOverflow)?;
             let snapshot = wad_div(user_stake.reward_debt, old_amount_wad)?;
             let delta_rps = pool.acc_reward_per_weighted_share.saturating_sub(snapshot);
-            let pending = wad_mul(user_weighted_before, delta_rps)?;
+            let full_entitlement = wad_mul(user_weighted_before, delta_rps)?;
+            // Subtract already-claimed amount (frequency-independent)
+            let pending = full_entitlement.saturating_sub(user_stake.claimed_rewards_wad);
             if pending > 0 {
                 let pending_lamports = pending / WAD;
                 if pending_lamports > 0 {
@@ -305,12 +307,12 @@ pub fn process_stake(
         user_stake.last_stake_time = current_time;
 
         // Reset snapshot to current acc_rps for the combined position.
-        // Same rationale as claim: prevents repeated-stake exploit from extracting
-        // max-weight rewards via geometric series on the old position.
+        // Position is restructured, so reset both snapshot and claimed tracker.
         let total_amount_wad = (total_amount as u128)
             .checked_mul(WAD)
             .ok_or(StakingError::MathOverflow)?;
         user_stake.reward_debt = wad_mul(total_amount_wad, pool.acc_reward_per_weighted_share)?;
+        user_stake.claimed_rewards_wad = 0;
 
         // Update pool-level aggregate: subtract old, add new (saturating for bootstrapping)
         pool.total_reward_debt = pool
