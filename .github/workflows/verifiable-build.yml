@@ -23,7 +23,7 @@ jobs:
         run: solana-keygen new --no-bip39-passphrase
 
       - name: Build program
-        run: ./scripts/build-sbf.sh
+        run: cargo build-sbf --workspace
 
       - name: Start test validator
         run: |
