@@ -22,24 +22,8 @@ jobs:
       - name: Generate keypair
         run: solana-keygen new --no-bip39-passphrase
 
-      - name: Install platform-tools
-        run: |
-          # Build a dummy project to trigger platform-tools download
-          # (platform-tools provides the SBF target compiler)
-          cargo init /tmp/sbf-dummy --edition 2021
-          cd /tmp/sbf-dummy
-          # Generate and downgrade Cargo.lock to v3 (platform-tools Cargo doesn't support v4)
-          cargo generate-lockfile
-          sed -i 's/^version = 4$/version = 3/' Cargo.lock
-          cargo build-sbf
-          rm -rf /tmp/sbf-dummy
-
       - name: Build program
-        run: |
-          # Override RUSTC so cargo build-sbf uses system rustc for host compilation
-          # (platform-tools ships rustc 1.75 which is too old for current deps)
-          export RUSTC="$(rustup which rustc)"
-          cargo build-sbf --workspace
+        run: cargo build-sbf --workspace
 
       - name: Start test validator
         run: |
