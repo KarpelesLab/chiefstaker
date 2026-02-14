@@ -36,10 +36,9 @@ jobs:
 
       - name: Build program
         run: |
-          # Prepend system rustc so it takes precedence over platform-tools rustc
+          # Override RUSTC so cargo build-sbf uses system rustc for host compilation
           # (platform-tools ships rustc 1.75 which is too old for current deps)
-          SYSTEM_RUSTC_DIR="$(dirname "$(rustup which rustc)")"
-          export PATH="$SYSTEM_RUSTC_DIR:$PATH"
+          export RUSTC="$(rustup which rustc)"
           cargo build-sbf --workspace
 
       - name: Start test validator
