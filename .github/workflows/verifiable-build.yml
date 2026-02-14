@@ -23,7 +23,14 @@ jobs:
         run: solana-keygen new --no-bip39-passphrase
 
       - name: Build program
-        run: cargo build-sbf --workspace
+        run: |
+          # Install platform-tools (SBF target compiler)
+          cargo build-sbf --force-tools-install
+          # Prepend system rustc so it takes precedence over platform-tools rustc
+          # (platform-tools ships rustc 1.75 which is too old for current deps)
+          SYSTEM_RUSTC_DIR="$(dirname "$(rustup which rustc)")"
+          export PATH="$SYSTEM_RUSTC_DIR:$PATH"
+          cargo build-sbf --workspace --no-rustup-override --skip-tools-install
 
       - name: Start test validator
         run: |
