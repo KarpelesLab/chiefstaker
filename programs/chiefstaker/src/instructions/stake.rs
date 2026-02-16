@@ -234,9 +234,10 @@ pub fn process_stake(
         let old_reward_debt = user_stake.reward_debt;
 
         // Auto-claim pending rewards before resetting reward_debt.
-        // Track any unpaid portion so it remains claimable after the stake update.
+        // Also compute immature credit to preserve unvested rewards across the reset.
         // NOTE: Actual SOL transfer is deferred until after the token CPI to avoid
         // Solana's CPI balance check failure (same pattern as execute_unstake).
+        let mut immature_credit_wad: u128 = 0;
         let user_weighted_before = calculate_user_weighted_stake(
             user_stake.amount,
             user_stake.exp_start_factor,
@@ -265,9 +266,21 @@ pub fn process_stake(
                         pool.last_synced_lamports =
                             pool.last_synced_lamports.saturating_sub(auto_claim_transfer);
                     }
-                    // Unpaid portion remains naturally visible via snapshot delta
                 }
             }
+
+            // Preserve immature (unvested) rewards across the position restructure.
+            // credit = max_entitlement - total_already_paid (prior claims + this auto-claim).
+            // This is subtracted from the new reward_debt to create a positive delta_rps,
+            // so the immature rewards gradually become claimable as the new position matures.
+            let max_entitlement = wad_mul(old_amount_wad, delta_rps)?;
+            let auto_claim_wad = (auto_claim_transfer as u128)
+                .checked_mul(WAD)
+                .ok_or(StakingError::MathOverflow)?;
+            let already_paid = user_stake.claimed_rewards_wad
+                .checked_add(auto_claim_wad)
+                .ok_or(StakingError::MathOverflow)?;
+            immature_credit_wad = max_entitlement.saturating_sub(already_paid);
         }
 
         // For additional stakes, we need to track a weighted average exp_start_factor
@@ -306,12 +319,15 @@ pub fn process_stake(
         // Note: stake_time stays as original for weight calculation purposes
         user_stake.last_stake_time = current_time;
 
-        // Reset snapshot to current acc_rps for the combined position.
-        // Position is restructured, so reset both snapshot and claimed tracker.
+        // Reset snapshot to current acc_rps for the combined position,
+        // but subtract immature credit so unvested rewards are preserved.
+        // This creates a positive delta_rps from the start, allowing the
+        // immature rewards to gradually become claimable as weight matures.
         let total_amount_wad = (total_amount as u128)
             .checked_mul(WAD)
             .ok_or(StakingError::MathOverflow)?;
-        user_stake.reward_debt = wad_mul(total_amount_wad, pool.acc_reward_per_weighted_share)?;
+        let base_reward_debt = wad_mul(total_amount_wad, pool.acc_reward_per_weighted_share)?;
+        user_stake.reward_debt = base_reward_debt.saturating_sub(immature_credit_wad);
         user_stake.claimed_rewards_wad = 0;
 
         // Update pool-level aggregate: subtract old, add new (saturating for bootstrapping)
