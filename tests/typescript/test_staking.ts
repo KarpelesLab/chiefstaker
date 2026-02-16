@@ -4218,7 +4218,7 @@ async function runTests() {
     const ctx = new TestContext(connection, Keypair.generate());
     await ctx.setup();
     await ctx.createMint(9);
-    await ctx.initializePool(BigInt(60)); // 60s tau
+    await ctx.initializePool(BigInt(20)); // 20s tau — fast convergence
 
     const staker = Keypair.generate();
     await airdropAndConfirm(connection, staker.publicKey, 5 * LAMPORTS_PER_SOL);
@@ -4228,9 +4228,9 @@ async function runTests() {
     // Stake 1B tokens
     await ctx.stake(staker, stakerToken, BigInt(1_000_000_000));
 
-    // Wait for significant maturity (~39% weight at 30s/60s tau)
-    console.log('    Waiting 30s for ~39% weight...');
-    await new Promise(r => setTimeout(r, 30000));
+    // Wait for ~53% weight (15s / 20s tau): 1 - e^(-0.75) ≈ 52.8%
+    console.log('    Waiting 15s for ~53% weight (tau=20s)...');
+    await new Promise(r => setTimeout(r, 15000));
 
     // Deposit 1 SOL
     await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL));
@@ -4254,9 +4254,11 @@ async function runTests() {
       throw new Error(`Expected positive immature credit, got ${immatureCredit}`);
     }
 
-    // Wait for the combined position to fully mature (3x tau = ~95%)
-    console.log('    Waiting 40s for high maturity on combined position...');
-    await new Promise(r => setTimeout(r, 40000));
+    // Wait 60s for near-full maturity (3x tau = ~95%)
+    // Blended exp ≈ (1B*1.0 + 2B*e^(15/20)) / 3B ≈ 1.42
+    // At t=75s from base: weight = 1 - e^(-75/20) * 1.42 = 1 - 0.0235 * 1.42 ≈ 96.7%
+    console.log('    Waiting 60s for near-full maturity (3x tau)...');
+    await new Promise(r => setTimeout(r, 60000));
 
     // Claim — should get most of the preserved immature rewards
     const balBeforeClaim = BigInt(await ctx.getBalance(staker.publicKey));
@@ -4265,16 +4267,13 @@ async function runTests() {
     const claimed = balAfterClaim - balBeforeClaim;
     console.log(`    Claimed after high maturity: ${claimed} lamports`);
 
-    // The claimed amount should be close to the immature credit (converted to lamports)
-    // At ~95% maturity of the combined position, ~95% of the credit should be claimable
     const creditLamports = immatureCredit / WAD;
     console.log(`    Immature credit (lamports): ${creditLamports}`);
     console.log(`    Claimed: ${claimed}`);
 
-    // With 1B old (30s) + 2B fresh, blended exp is ~1.43. At 70s from base_time:
-    // weight ≈ 1 - e^(-70/60) * 1.43 ≈ 55%. Check at least 40% of credit is claimable.
-    if (claimed < creditLamports * 40n / 100n) {
-      throw new Error(`Claimed ${claimed} < 40% of immature credit ${creditLamports}`);
+    // At ~97% combined weight, should claim at least 85% of the immature credit
+    if (claimed < creditLamports * 85n / 100n) {
+      throw new Error(`Claimed ${claimed} < 85% of immature credit ${creditLamports}`);
     }
 
     console.log('    Proportional maturation: OK');
@@ -4452,7 +4451,7 @@ async function runTests() {
     const ctx = new TestContext(connection, Keypair.generate());
     await ctx.setup();
     await ctx.createMint(9);
-    await ctx.initializePool(BigInt(60)); // 60s tau
+    await ctx.initializePool(BigInt(20)); // 20s tau — fast convergence for test
 
     const staker = Keypair.generate();
     await airdropAndConfirm(connection, staker.publicKey, 5 * LAMPORTS_PER_SOL);
@@ -4462,11 +4461,11 @@ async function runTests() {
     // Initial stake
     await ctx.stake(staker, stakerToken, BigInt(1_000_000_000));
 
-    // Wait for ~39% weight (30s / 60s tau)
-    console.log('    Waiting 30s for ~39% weight...');
-    await new Promise(r => setTimeout(r, 30000));
+    // Wait for ~53% weight (15s / 20s tau): 1 - e^(-0.75) ≈ 52.8%
+    console.log('    Waiting 15s for ~53% weight (tau=20s)...');
+    await new Promise(r => setTimeout(r, 15000));
 
-    // Deposit 1 SOL — staker has ~39% weight, so ~0.39 SOL is mature, ~0.61 SOL is immature
+    // Deposit 1 SOL — staker has ~53% weight, so ~0.53 SOL mature, ~0.47 SOL immature
     const deposit = BigInt(LAMPORTS_PER_SOL);
     await ctx.depositRewards(deposit);
 
@@ -4479,8 +4478,10 @@ async function runTests() {
     totalReceived += autoClaimed;
     console.log(`    Auto-claimed (mature): ${autoClaimed} lamports`);
 
-    // Wait for full maturity on combined position (5x tau = ~99.3%)
-    console.log('    Waiting 60s for near-full maturity...');
+    // Wait 60s for near-full maturity on combined position (3x tau = ~95%)
+    // Blended exp ≈ (1.0 + e^(15/20)) / 2 ≈ 1.56
+    // At t=75s from base: weight = 1 - e^(-75/20) * 1.56 = 1 - 0.0235 * 1.56 ≈ 96.3%
+    console.log('    Waiting 60s for near-full maturity (3x tau)...');
     await new Promise(r => setTimeout(r, 60000));
 
     // Claim remaining rewards (should include the matured immature portion)
@@ -4500,11 +4501,10 @@ async function runTests() {
     console.log(`    Total received: ${totalReceived} lamports`);
     console.log(`    Total deposited: ${deposit} lamports`);
 
-    // With 1B+1B blended exp at t=90s from base, combined weight ≈ 70%.
-    // Total recovery ≈ mature_auto_claim + 70% * immature ≈ 39% + 70%*61% ≈ 82%.
-    // Use 75% threshold to allow for timing variance in CI.
-    if (totalReceived < deposit * 75n / 100n) {
-      throw new Error(`Sole staker should recover >75% of deposit, got ${totalReceived} of ${deposit}`);
+    // With tau=20 and 60s wait after restake, combined weight ≈ 96%.
+    // Total ≈ 53% + 96% * 47% ≈ 98%. Sole staker should recover >90%.
+    if (totalReceived < deposit * 90n / 100n) {
+      throw new Error(`Sole staker should recover >90% of deposit, got ${totalReceived} of ${deposit}`);
     }
 
     // Conservation: cannot exceed deposit
