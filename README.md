@@ -21,10 +21,23 @@ This prevents flash-stake attacks -- you can't just deposit right before a rewar
 SOL rewards are distributed using a **snapshot-delta** formula. When rewards arrive, they are divided by `total_staked * WAD` (max weight) to produce an accumulator increment. Each staker's pending rewards are computed as:
 
 ```
-pending = user_weighted * (acc_reward_per_weighted_share - snapshot)
+pending = user_weighted * (acc_reward_per_weighted_share - snapshot) - claimed_rewards_wad
 ```
 
-where `snapshot` is the accumulator value at the time of the staker's last action (stake, claim, or unstake). This means claimable rewards start near zero after each action and grow as the staker's weight matures — but can never exceed the deposited amount. Immature (unclaimed) portions stay naturally in the pool and can be redistributed via `RecoverStrandedRewards`.
+where `snapshot` is encoded in `reward_debt` and `claimed_rewards_wad` tracks cumulative payouts for frequency-independent claiming (claiming once or ten times yields the same total).
+
+**Immature rewards** are the gap between max-weight entitlement and time-weighted entitlement — SOL the staker has earned "on paper" but can't claim until their weight matures further. These stay in the pool and can be redistributed via `RecoverStrandedRewards`.
+
+### Additional Stakes (Restaking)
+
+When a staker adds more tokens to an existing position:
+
+1. **Auto-claim**: mature pending rewards are paid out immediately
+2. **Immature preservation**: unvested rewards are preserved as a credit in the new `reward_debt` (set below the baseline so `delta_rps > 0` from the start)
+3. **Weight blending**: `exp_start_factor` is recomputed as a weighted average of old and new contributions
+4. **Snapshot reset**: `claimed_rewards_wad` resets to 0 for the restructured position
+
+The immature credit gradually becomes claimable as the combined position's weight matures. At full maturity, 100% of the preserved credit is recoverable.
 
 Rewards can be deposited directly via instruction or sent to the pool PDA (e.g., from pump.fun fee revenue) and synced.
 
@@ -99,6 +112,28 @@ cargo test
 # Run E2E tests
 ./scripts/run-e2e-tests.sh
 ```
+
+CI runs the full E2E suite against a local test validator on every push.
+
+## Verification
+
+The deployed program is verified on the OtterSec registry. To verify locally:
+
+```bash
+./scripts/verify-deploy.sh
+```
+
+This runs `solana-verify verify-from-repo --remote` against the deployed program ID.
+
+## Changelog
+
+### v3 (current)
+
+- **Immature rewards preservation**: staking additional tokens no longer loses unvested SOL rewards. The auto-claim pays mature rewards and the immature portion is preserved as a credit in the new `reward_debt`, gradually unlocking as the combined position matures.
+- **Legacy account realloc fix**: `maybe_realloc` uses system program CPI (`system_instruction::transfer`) instead of direct lamport manipulation, fixing "instruction spent from the balance of an account it does not own" for legacy accounts.
+- **System program as trailing account**: instructions that call `maybe_realloc` (claim, unstake, request unstake, complete unstake, cancel unstake) accept an optional trailing system program account for legacy account resizing.
+- **Frequency-independent claims**: `claimed_rewards_wad` field tracks cumulative payouts so claiming once or many times yields the same total. Prevents repeated-claim exploits.
+- **`total_rewards_claimed` accounting**: per-user cumulative lamport counter for reward tracking.
 
 ## Project Structure
 
