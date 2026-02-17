@@ -4737,7 +4737,7 @@ async function runTests() {
     }
 
     // Verify combined stake amount
-    const userStakeState = await ctx.readUserStake(userB.publicKey);
+    const userStakeState = await ctx.readUserStakeState(userB.publicKey);
     if (userStakeState.amount !== totalTokens) {
       throw new Error(`Expected combined stake ${totalTokens}, got ${userStakeState.amount}`);
     }
