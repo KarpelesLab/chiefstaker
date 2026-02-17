@@ -191,6 +191,33 @@ pub enum StakingInstruction {
     /// 3. `[writable, signer]` Payer
     /// 4. `[]` System program
     SetPoolMetadata,
+
+    /// Take fee ownership: set pool as sole fee recipient and revoke authority (permissionless)
+    ///
+    /// Prerequisite: fee sharing authority must already be transferred to the pool PDA.
+    /// This instruction sets the pool PDA as the sole shareholder (100% / 10000 bps)
+    /// and then revokes the fee sharing authority, making it irreversible.
+    ///
+    /// Accounts:
+    /// 0. `[]` Pool account (PDA: ["pool", mint])
+    /// 1. `[]` Token mint
+    /// 2. `[]` pfee program
+    /// 3. `[]` pfee event authority
+    /// 4. `[]` pump global
+    /// 5. `[writable]` sharing config
+    /// 6. `[]` bonding curve
+    /// 7. `[writable]` pump creator vault
+    /// 8. `[]` system program
+    /// 9. `[]` pump program
+    /// 10. `[]` pump event authority
+    /// 11. `[]` pump AMM program
+    /// 12. `[]` AMM event authority
+    /// 13. `[]` wSOL mint
+    /// 14. `[]` token program
+    /// 15. `[]` associated token program
+    /// 16. `[writable]` coin creator vault authority
+    /// 17. `[writable]` coin creator vault ATA
+    TakeFeeOwnership,
 }
 
 #[cfg(not(feature = "no-entrypoint"))]
@@ -282,6 +309,10 @@ pub fn process_instruction(
         StakingInstruction::SetPoolMetadata => {
             msg!("Instruction: SetPoolMetadata");
             process_set_pool_metadata(program_id, accounts)
+        }
+        StakingInstruction::TakeFeeOwnership => {
+            msg!("Instruction: TakeFeeOwnership");
+            process_take_fee_ownership(program_id, accounts)
         }
     }
 }

@@ -64,6 +64,7 @@ enum InstructionType {
   CloseStakeAccount = 12,
   FixTotalRewardDebt = 13,
   SetPoolMetadata = 14,
+  TakeFeeOwnership = 15,
 }
 
 // Helper to derive PDAs
