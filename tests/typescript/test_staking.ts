@@ -4414,7 +4414,7 @@ async function runTests() {
     const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
     await ctx.setup();
     await ctx.createMint(9);
-    const tau = BigInt(30); // 30s tau for fast maturity
+    const tau = BigInt(60); // 60s tau (minimum allowed)
     await ctx.initializePool(tau);
 
     const staker = Keypair.generate();
@@ -4425,9 +4425,9 @@ async function runTests() {
     // Stake 1B tokens
     await ctx.stake(staker, stakerToken, BigInt(1_000_000_000));
 
-    // Wait ~21s for ~50% maturity (1 - e^(-21/30) ≈ 0.503)
-    console.log('    Waiting 21s for ~50% maturity...');
-    await new Promise(r => setTimeout(r, 21000));
+    // Wait ~42s for ~50% maturity (1 - e^(-42/60) ≈ 0.503)
+    console.log('    Waiting 42s for ~50% maturity...');
+    await new Promise(r => setTimeout(r, 42000));
 
     // Read state before add-stake
     const stateBefore = await ctx.readUserStakeState(staker.publicKey);
@@ -4478,9 +4478,9 @@ async function runTests() {
     // So verify the blend is approximately the midpoint of WAD and old_exp.
     const WAD = 1_000_000_000_000_000_000n;
     // The old exp_start_factor for a stake at t=0 (base_time) is WAD (exp(0)=1).
-    // The new exp_start_factor for a stake at t=21 is exp(21/30) ≈ 2.01 * WAD.
+    // The new exp_start_factor for a stake at t=42 is exp(42/60) ≈ 2.01 * WAD.
     // Blend = (1B * WAD + 1B * ~2.01*WAD) / 2B ≈ 1.505 * WAD
-    // This means weight = 2B * (1 - 1.505 * exp(-21/30))
+    // This means weight = 2B * (1 - 1.505 * exp(-42/60))
     //                    ≈ 2B * (1 - 1.505 * 0.497) ≈ 2B * 0.252 ≈ 504M
     // vs old weight     = 1B * (1 - 1.0 * 0.497) ≈ 1B * 0.503 ≈ 503M
     // So weight is approximately preserved (within rounding).
