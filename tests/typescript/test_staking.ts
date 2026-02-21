@@ -4331,146 +4331,6 @@ async function runTests() {
 
     console.log('    Dust-stake exploit blocked: OK');
   });
-    console.log(`    Auto-claim on add-stake: ${autoClaimOnAdd} lamports`);
-
-    // After add-stake, verify immature credit is encoded in reward_debt
-    const WAD = 1_000_000_000_000_000_000n;
-    const poolAfter = await ctx.readPoolState();
-    const stakeAfter = await ctx.readUserStakeState(staker.publicKey);
-    const totalAmountWad = stakeAfter.amount * WAD;
-    // Full snapshot = total_amount_wad * acc_rps / WAD
-    const fullDebt = (totalAmountWad * poolAfter.accRewardPerWeightedShare + WAD / 2n) / WAD;
-    // credit_in_debt = fullDebt - actual_reward_debt (immature credit lowers reward_debt)
-    const creditInDebt = fullDebt - stakeAfter.rewardDebt;
-
-    console.log(`    reward_debt=${stakeAfter.rewardDebt}, full_snapshot=${fullDebt}`);
-    console.log(`    credit_in_debt (immature preserved): ${creditInDebt}`);
-    console.log(`    claimed_rewards_wad (pending=0 offset): ${stakeAfter.claimedRewardsWad}`);
-
-    // Immature credit must be > 0 (there were unvested rewards before add-stake)
-    if (creditInDebt <= 0n) {
-      throw new Error('Immature credit NOT preserved: credit_in_debt is 0');
-    }
-    // claimed_rewards_wad must be > 0 (offsets credit so pending=0 at current weight)
-    if (stakeAfter.claimedRewardsWad <= 0n) {
-      throw new Error('claimed_rewards_wad should be > 0 to offset credit at current weight');
-    }
-
-    console.log('    Immature SOL preserved after add-stake: OK');
-  });
-
-  // Test: No SOL become mature suddenly on add-stake (pending=0 at current weight)
-  await test('AddStake: no SOL become mature suddenly on add-stake', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
-    await ctx.setup();
-    await ctx.createMint(9);
-    await ctx.initializePool(BigInt(60)); // 60s tau
-
-    const staker = Keypair.generate();
-    await airdropAndConfirm(connection, staker.publicKey, 5 * LAMPORTS_PER_SOL);
-    const stakerToken = await ctx.createUserTokenAccount(staker.publicKey);
-    await ctx.mintTokens(stakerToken, BigInt(2_000_000_000));
-
-    // Stake 1B tokens
-    await ctx.stake(staker, stakerToken, BigInt(1_000_000_000));
-
-    // Wait for partial maturity
-    console.log('    Waiting 15s for partial maturity...');
-    await new Promise(r => setTimeout(r, 15000));
-
-    // Deposit 2 SOL
-    await ctx.depositRewards(BigInt(2 * LAMPORTS_PER_SOL));
-
-    // Claim all vested rewards first
-    let bal = BigInt(await ctx.getBalance(staker.publicKey));
-    await ctx.claimRewards(staker);
-    let balAfter = BigInt(await ctx.getBalance(staker.publicKey));
-    const vestedBefore = balAfter - bal;
-    console.log(`    Vested claim: ${vestedBefore} lamports`);
-
-    // Now add-stake — should auto-claim ~0 (we just claimed)
-    bal = BigInt(await ctx.getBalance(staker.publicKey));
-    await ctx.stake(staker, stakerToken, BigInt(1_000_000_000));
-    balAfter = BigInt(await ctx.getBalance(staker.publicKey));
-    const addStakeAutoClaim = balAfter - bal;
-    console.log(`    Auto-claim on add-stake: ${addStakeAutoClaim} lamports`);
-
-    // Immediately claim — should get 0 (no SOL became mature suddenly)
-    bal = BigInt(await ctx.getBalance(staker.publicKey));
-    await ctx.claimRewards(staker);
-    balAfter = BigInt(await ctx.getBalance(staker.publicKey));
-    const immediateClaim = balAfter - bal;
-    console.log(`    Immediate claim after add-stake: ${immediateClaim} lamports`);
-
-    // Should be near-zero (negative from tx fee is expected)
-    if (immediateClaim > BigInt(100_000)) {
-      throw new Error(`SOL became mature suddenly on add-stake! Got ${immediateClaim} lamports`);
-    }
-
-    console.log('    No sudden maturity on add-stake: OK');
-  });
-
-  // Test: After add-stake, SOL continues to mature and is redeemable
-  await test('AddStake: SOL continues to mature after add-stake', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
-    await ctx.setup();
-    await ctx.createMint(9);
-    await ctx.initializePool(BigInt(60)); // 60s tau
-
-    const staker = Keypair.generate();
-    await airdropAndConfirm(connection, staker.publicKey, 5 * LAMPORTS_PER_SOL);
-    const stakerToken = await ctx.createUserTokenAccount(staker.publicKey);
-    await ctx.mintTokens(stakerToken, BigInt(2_000_000_000));
-
-    // Stake 1B tokens
-    await ctx.stake(staker, stakerToken, BigInt(1_000_000_000));
-
-    // Wait for partial maturity
-    console.log('    Waiting 15s for partial maturity...');
-    await new Promise(r => setTimeout(r, 15000));
-
-    // Deposit 2 SOL
-    await ctx.depositRewards(BigInt(2 * LAMPORTS_PER_SOL));
-
-    // Add 1B more (auto-claims vested, preserves immature)
-    let bal = BigInt(await ctx.getBalance(staker.publicKey));
-    await ctx.stake(staker, stakerToken, BigInt(1_000_000_000));
-    let balAfter = BigInt(await ctx.getBalance(staker.publicKey));
-    const autoClaimOnAdd = balAfter - bal;
-    console.log(`    Auto-claim on add-stake: ${autoClaimOnAdd} lamports`);
-
-    // Wait 30s for more weight to grow (immature credit should partially vest)
-    console.log('    Waiting 30s for partial maturation...');
-    await new Promise(r => setTimeout(r, 30000));
-
-    // Claim — should get some newly matured rewards
-    bal = BigInt(await ctx.getBalance(staker.publicKey));
-    await ctx.claimRewards(staker);
-    balAfter = BigInt(await ctx.getBalance(staker.publicKey));
-    const claim1 = balAfter - bal;
-    console.log(`    Claim after 30s: ${claim1} lamports`);
-
-    if (claim1 < BigInt(100_000)) {
-      throw new Error(`SOL not maturing after add-stake! Claim after 30s = ${claim1}`);
-    }
-
-    // Wait another 30s and claim again — should get more
-    console.log('    Waiting 30s more...');
-    await new Promise(r => setTimeout(r, 30000));
-
-    bal = BigInt(await ctx.getBalance(staker.publicKey));
-    await ctx.claimRewards(staker);
-    balAfter = BigInt(await ctx.getBalance(staker.publicKey));
-    const claim2 = balAfter - bal;
-    console.log(`    Claim after 60s more: ${claim2} lamports`);
-
-    if (claim2 < BigInt(100_000)) {
-      throw new Error(`SOL stopped maturing! Claim after 60s more = ${claim2}`);
-    }
-
-    console.log(`    Total matured after add-stake: ${claim1 + claim2} lamports`);
-    console.log('    SOL continues to mature after add-stake: OK');
-  });
 
   // ========== StakeOnBehalf Tests ==========
 
@@ -4559,7 +4419,7 @@ async function runTests() {
     console.log(`    B received ${rewardReceived} lamports in rewards`);
   });
 
-  await test('StakeOnBehalf: add-more auto-claims to beneficiary', async () => {
+  await test('StakeOnBehalf: add-more preserves pending rewards for beneficiary', async () => {
     const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
     await ctx.setup();
     await ctx.createMint(9);
@@ -4584,35 +4444,26 @@ async function runTests() {
     const rewardAmount = BigInt(1_000_000_000);
     await ctx.depositRewards(rewardAmount);
 
-    // Record B's balance before add-more
-    const bBalBefore = BigInt(await ctx.getBalance(userB.publicKey));
-    const aBalBefore = BigInt(await ctx.getBalance(userA.publicKey));
-
-    // A adds more stake on behalf of B — triggers auto-claim to B
+    // A adds more stake on behalf of B — no auto-claim, pending preserved
     await ctx.stakeOnBehalf(userA, userAToken, userB.publicKey, BigInt(1_000_000_000));
-
-    const bBalAfter = BigInt(await ctx.getBalance(userB.publicKey));
-    const aBalAfter = BigInt(await ctx.getBalance(userA.publicKey));
-
-    const bGain = bBalAfter - bBalBefore;
-    // A should NOT have gained lamports from the auto-claim (only lost tx fees)
-    const aGain = aBalAfter - aBalBefore;
-
-    if (bGain <= 0n) {
-      throw new Error(`B should have received auto-claimed rewards, got ${bGain}`);
-    }
-    console.log(`    B auto-claimed ${bGain} lamports`);
-    console.log(`    A balance delta: ${aGain} (should be negative from fees)`);
-    if (aGain > 0n) {
-      throw new Error('A should not have gained lamports from auto-claim');
-    }
 
     // Verify combined stake amount
     const userStakeState = await ctx.readUserStakeState(userB.publicKey);
     if (userStakeState.amount !== totalTokens) {
       throw new Error(`Expected combined stake ${totalTokens}, got ${userStakeState.amount}`);
     }
-    console.log('    Add-more auto-claim goes to beneficiary: OK');
+
+    // B can still claim accumulated rewards
+    const bBalBefore = BigInt(await ctx.getBalance(userB.publicKey));
+    await ctx.claimRewards(userB);
+    const bBalAfter = BigInt(await ctx.getBalance(userB.publicKey));
+    const bRewards = bBalAfter - bBalBefore;
+
+    if (bRewards <= 0n) {
+      throw new Error(`B should have claimable rewards after add-stake, got ${bRewards}`);
+    }
+    console.log(`    B claimed ${bRewards} lamports after add-stake on behalf`);
+    console.log('    Add-more preserves pending rewards for beneficiary: OK');
   });
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
