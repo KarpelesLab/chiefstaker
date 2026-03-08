@@ -4566,7 +4566,7 @@ async function runTests() {
     const ctx = new TestContext(connection, payer, programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
-    await ctx.initializePool(5n); // tau = 5s
+    await ctx.initializePool(60n); // tau = 60s (minimum)
 
     const alice = Keypair.generate();
     await airdropAndConfirm(connection, alice.publicKey, 2 * LAMPORTS_PER_SOL);
@@ -4577,8 +4577,8 @@ async function runTests() {
     await ctx.stake(alice, aliceToken, BigInt(1_000_000_000));
 
     // Deposit rewards so acc_rps is non-zero
-    console.log('    Waiting 3s for maturity...');
-    await new Promise(r => setTimeout(r, 3000));
+    console.log('    Waiting 10s for weight...');
+    await new Promise(r => setTimeout(r, 10000));
     await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL));
 
     // Read current state
@@ -4615,7 +4615,7 @@ async function runTests() {
     const ctx = new TestContext(connection, payer, programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
-    await ctx.initializePool(5n);
+    await ctx.initializePool(60n); // tau = 60s (minimum)
 
     const alice = Keypair.generate();
     await airdropAndConfirm(connection, alice.publicKey, 2 * LAMPORTS_PER_SOL);
@@ -4640,7 +4640,7 @@ async function runTests() {
     const ctx = new TestContext(connection, payer, programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
-    await ctx.initializePool(5n); // tau = 5s
+    await ctx.initializePool(60n); // tau = 60s (minimum)
 
     const alice = Keypair.generate();
     await airdropAndConfirm(connection, alice.publicKey, 2 * LAMPORTS_PER_SOL);
@@ -4650,9 +4650,9 @@ async function runTests() {
     // Alice stakes
     await ctx.stake(alice, aliceToken, BigInt(1_000_000_000));
 
-    // Wait for full maturity and deposit rewards
-    console.log('    Waiting 16s for full maturity...');
-    await new Promise(r => setTimeout(r, 16000));
+    // Wait for partial maturity and deposit rewards
+    console.log('    Waiting 15s for weight...');
+    await new Promise(r => setTimeout(r, 15000));
     await ctx.depositRewards(BigInt(2 * LAMPORTS_PER_SOL));
 
     // Claim once to establish baseline
@@ -4694,7 +4694,7 @@ async function runTests() {
     const ctx = new TestContext(connection, payer, programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
-    await ctx.initializePool(5n);
+    await ctx.initializePool(60n); // tau = 60s (minimum)
 
     const alice = Keypair.generate();
     await airdropAndConfirm(connection, alice.publicKey, 2 * LAMPORTS_PER_SOL);
