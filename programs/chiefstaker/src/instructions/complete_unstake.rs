@@ -11,9 +11,8 @@ use solana_program::{
 
 use crate::{
     error::StakingError,
-    state::{StakingPool, UserStake},
+    state::{is_valid_token_program, StakingPool, UserStake},
 };
-use spl_token_2022;
 
 use super::unstake::execute_unstake;
 
@@ -41,8 +40,8 @@ pub fn process_complete_unstake(
     let user_info = next_account_info(account_info_iter)?;
     let token_program_info = next_account_info(account_info_iter)?;
 
-    // Validate Token 2022 program
-    if *token_program_info.key != spl_token_2022::id() {
+    // Validate token program (SPL Token or Token 2022)
+    if !is_valid_token_program(token_program_info.key) {
         return Err(StakingError::InvalidTokenProgram.into());
     }
 

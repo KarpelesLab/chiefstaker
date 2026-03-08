@@ -17,7 +17,7 @@ use spl_token_2022::extension::StateWithExtensions;
 use crate::{
     error::StakingError,
     math::{exp_time_ratio, wad_mul, MAX_EXP_INPUT, U256, WAD},
-    state::{PoolMetadata, StakingPool, UserStake, STAKE_SEED},
+    state::{is_valid_token_program, PoolMetadata, StakingPool, UserStake, STAKE_SEED},
 };
 
 /// Stake tokens into the pool
@@ -51,8 +51,8 @@ pub fn process_stake(
     let system_program_info = next_account_info(account_info_iter)?;
     let token_program_info = next_account_info(account_info_iter)?;
 
-    // Validate Token 2022 program
-    if *token_program_info.key != spl_token_2022::id() {
+    // Validate token program (SPL Token or Token 2022)
+    if !is_valid_token_program(token_program_info.key) {
         return Err(StakingError::InvalidTokenProgram.into());
     }
 
@@ -287,7 +287,7 @@ pub fn process_stake(
 
     invoke(
         &spl_token_2022::instruction::transfer_checked(
-            &spl_token_2022::id(),
+            token_program_info.key,
             user_token_info.key,
             mint_info.key,
             token_vault_info.key,
