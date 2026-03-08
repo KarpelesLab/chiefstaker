@@ -25,6 +25,7 @@ import {
   mintTo,
   getAccount,
   TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
   ExtensionType,
   getMintLen,
   createInitializeMintInstruction,
@@ -109,7 +110,8 @@ function createInitializePoolInstruction(
   mint: PublicKey,
   tokenVault: PublicKey,
   authority: PublicKey,
-  tauSeconds: bigint
+  tauSeconds: bigint,
+  tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID,
 ): TransactionInstruction {
   // Borsh serialize: enum variant (u8) + tau_seconds (u64)
   const data = Buffer.alloc(1 + 8);
@@ -123,7 +125,7 @@ function createInitializePoolInstruction(
       { pubkey: tokenVault, isSigner: false, isWritable: true },
       { pubkey: authority, isSigner: true, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: tokenProgramId, isSigner: false, isWritable: false },
       { pubkey: new PublicKey('SysvarRent111111111111111111111111111111111'), isSigner: false, isWritable: false },
     ],
     programId: PROGRAM_ID,
@@ -138,7 +140,8 @@ function createStakeInstruction(
   userToken: PublicKey,
   mint: PublicKey,
   user: PublicKey,
-  amount: bigint
+  amount: bigint,
+  tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID,
 ): TransactionInstruction {
   const data = Buffer.alloc(1 + 8);
   data.writeUInt8(InstructionType.Stake, 0);
@@ -153,7 +156,7 @@ function createStakeInstruction(
       { pubkey: mint, isSigner: false, isWritable: false },
       { pubkey: user, isSigner: true, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     ],
     programId: PROGRAM_ID,
     data,
@@ -167,7 +170,8 @@ function createUnstakeInstruction(
   userToken: PublicKey,
   mint: PublicKey,
   user: PublicKey,
-  amount: bigint
+  amount: bigint,
+  tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID,
 ): TransactionInstruction {
   const data = Buffer.alloc(1 + 8);
   data.writeUInt8(InstructionType.Unstake, 0);
@@ -181,7 +185,7 @@ function createUnstakeInstruction(
       { pubkey: userToken, isSigner: false, isWritable: true },
       { pubkey: mint, isSigner: false, isWritable: false },
       { pubkey: user, isSigner: true, isWritable: true },
-      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     ],
     programId: PROGRAM_ID,
     data,
@@ -375,6 +379,7 @@ function createCompleteUnstakeInstruction(
   userToken: PublicKey,
   mint: PublicKey,
   user: PublicKey,
+  tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID,
 ): TransactionInstruction {
   const data = Buffer.alloc(1);
   data.writeUInt8(InstructionType.CompleteUnstake, 0);
@@ -387,7 +392,7 @@ function createCompleteUnstakeInstruction(
       { pubkey: userToken, isSigner: false, isWritable: true },
       { pubkey: mint, isSigner: false, isWritable: false },
       { pubkey: user, isSigner: true, isWritable: true },
-      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     ],
     programId: PROGRAM_ID,
     data,
@@ -499,6 +504,7 @@ function createStakeOnBehalfInstruction(
   beneficiary: PublicKey,
   amount: bigint,
   metadataPDA?: PublicKey,
+  tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID,
 ): TransactionInstruction {
   const data = Buffer.alloc(1 + 8);
   data.writeUInt8(InstructionType.StakeOnBehalf, 0);
@@ -513,7 +519,7 @@ function createStakeOnBehalfInstruction(
     { pubkey: staker, isSigner: true, isWritable: true },
     { pubkey: beneficiary, isSigner: false, isWritable: true },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
   ];
   if (metadataPDA) {
     keys.push({ pubkey: metadataPDA, isSigner: false, isWritable: true });
@@ -535,6 +541,7 @@ function createStakeWithMetadataInstruction(
   user: PublicKey,
   amount: bigint,
   metadataPDA: PublicKey,
+  tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID,
 ): TransactionInstruction {
   const data = Buffer.alloc(1 + 8);
   data.writeUInt8(InstructionType.Stake, 0);
@@ -549,7 +556,7 @@ function createStakeWithMetadataInstruction(
       { pubkey: mint, isSigner: false, isWritable: false },
       { pubkey: user, isSigner: true, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: tokenProgramId, isSigner: false, isWritable: false },
       { pubkey: metadataPDA, isSigner: false, isWritable: true },
     ],
     programId: PROGRAM_ID,
@@ -590,11 +597,13 @@ class TestContext {
   mintAuthority: Keypair;
   poolPDA!: PublicKey;
   tokenVaultPDA!: PublicKey;
+  tokenProgramId: PublicKey;
 
-  constructor(connection: Connection, payer: Keypair, programAuthority: Keypair) {
+  constructor(connection: Connection, payer: Keypair, programAuthority: Keypair, tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID) {
     this.connection = connection;
     this.payer = payer;
     this.programAuthority = programAuthority;
+    this.tokenProgramId = tokenProgramId;
     this.mintAuthority = Keypair.generate();
   }
 
@@ -623,7 +632,7 @@ class TestContext {
       decimals,
       undefined,
       undefined,
-      TOKEN_2022_PROGRAM_ID
+      this.tokenProgramId
     );
 
     [this.poolPDA] = derivePoolPDA(this.mint);
@@ -638,7 +647,8 @@ class TestContext {
       this.mint,
       this.tokenVaultPDA,
       this.payer.publicKey,
-      tauSeconds
+      tauSeconds,
+      this.tokenProgramId,
     );
 
     const tx = new Transaction().add(ix);
@@ -653,7 +663,7 @@ class TestContext {
       owner,
       undefined,
       undefined,
-      TOKEN_2022_PROGRAM_ID
+      this.tokenProgramId
     );
   }
 
@@ -667,7 +677,7 @@ class TestContext {
       amount,
       undefined,
       undefined,
-      TOKEN_2022_PROGRAM_ID
+      this.tokenProgramId
     );
   }
 
@@ -681,7 +691,8 @@ class TestContext {
       userToken,
       this.mint,
       user.publicKey,
-      amount
+      amount,
+      this.tokenProgramId,
     );
 
     const tx = new Transaction().add(ix);
@@ -700,6 +711,8 @@ class TestContext {
       staker.publicKey,
       beneficiary,
       amount,
+      undefined,
+      this.tokenProgramId,
     );
 
     const tx = new Transaction().add(ix);
@@ -716,7 +729,8 @@ class TestContext {
       userToken,
       this.mint,
       user.publicKey,
-      amount
+      amount,
+      this.tokenProgramId,
     );
 
     const tx = new Transaction().add(ix);
@@ -840,6 +854,7 @@ class TestContext {
       userToken,
       this.mint,
       user.publicKey,
+      this.tokenProgramId,
     );
 
     const tx = new Transaction().add(ix);
@@ -963,6 +978,7 @@ class TestContext {
       user.publicKey,
       amount,
       metadataPDA,
+      this.tokenProgramId,
     );
 
     const tx = new Transaction().add(ix);
@@ -1085,7 +1101,7 @@ class TestContext {
   }
 
   async getTokenBalance(tokenAccount: PublicKey): Promise<bigint> {
-    const account = await getAccount(this.connection, tokenAccount, undefined, TOKEN_2022_PROGRAM_ID);
+    const account = await getAccount(this.connection, tokenAccount, undefined, this.tokenProgramId);
     return account.amount;
   }
 }
@@ -1141,9 +1157,16 @@ async function runTests() {
     }
   }
 
+  for (const [tokenProgramLabel, tokenProgramId] of [
+    ['Token2022', TOKEN_2022_PROGRAM_ID],
+    ['SPL Token', TOKEN_PROGRAM_ID],
+  ] as [string, PublicKey][]) {
+
+  console.log(`\n========== ${tokenProgramLabel} Tests ==========\n`);
+
   // Test: Initialize Pool
-  await test('Initialize pool', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Initialize pool`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -1156,8 +1179,8 @@ async function runTests() {
   });
 
   // Test: Stake tokens
-  await test('Stake tokens', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Stake tokens`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1178,8 +1201,8 @@ async function runTests() {
   });
 
   // Test: Multiple stakers
-  await test('Multiple stakers', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Multiple stakers`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1205,8 +1228,8 @@ async function runTests() {
   });
 
   // Test: Deposit and claim rewards
-  await test('Deposit and claim rewards', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Deposit and claim rewards`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(100)); // Short tau
@@ -1233,8 +1256,8 @@ async function runTests() {
   });
 
   // Test: Unstake partial
-  await test('Unstake partial', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Unstake partial`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1256,8 +1279,8 @@ async function runTests() {
   });
 
   // Test: Unstake full
-  await test('Unstake full', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Unstake full`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1277,8 +1300,8 @@ async function runTests() {
   });
 
   // Test: SyncRewards (pump.fun simulation)
-  await test('SyncRewards (pump.fun simulation)', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] SyncRewards (pump.fun simulation)`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(100));
@@ -1306,8 +1329,8 @@ async function runTests() {
   });
 
   // Test: Additional stake
-  await test('Additional stake (same user)', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Additional stake (same user)`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1334,8 +1357,8 @@ async function runTests() {
   console.log('\n--- Pool Settings & Authority Tests ---\n');
 
   // Test: Update pool settings
-  await test('UpdatePoolSettings: set min_stake, lock, cooldown', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] UpdatePoolSettings: set min_stake, lock, cooldown`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1358,8 +1381,8 @@ async function runTests() {
   });
 
   // Test: Update settings with wrong authority fails
-  await test('UpdatePoolSettings: wrong authority rejected', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] UpdatePoolSettings: wrong authority rejected`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1381,8 +1404,8 @@ async function runTests() {
   });
 
   // Test: Transfer authority
-  await test('TransferAuthority: transfer and use new authority', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] TransferAuthority: transfer and use new authority`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1411,8 +1434,8 @@ async function runTests() {
   });
 
   // Test: Renounce authority
-  await test('TransferAuthority: renounce (set to default pubkey)', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] TransferAuthority: renounce (set to default pubkey)`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1435,8 +1458,8 @@ async function runTests() {
   });
 
   // Test: Min stake amount enforced on new stake
-  await test('MinStake: enforced on new stake', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] MinStake: enforced on new stake`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1467,8 +1490,8 @@ async function runTests() {
   });
 
   // Test: Lock duration blocks early unstake
-  await test('LockDuration: blocks early unstake', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] LockDuration: blocks early unstake`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1504,8 +1527,8 @@ async function runTests() {
   });
 
   // Test: Cooldown flow - request → wait → complete
-  await test('Cooldown: request → wait → complete unstake', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Cooldown: request → wait → complete unstake`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1562,8 +1585,8 @@ async function runTests() {
   });
 
   // Test: Cancel unstake request
-  await test('Cooldown: cancel unstake request', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Cooldown: cancel unstake request`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1598,8 +1621,8 @@ async function runTests() {
   });
 
   // Test: Cannot stake while unstake request pending
-  await test('Cooldown: cannot stake while unstake pending', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Cooldown: cannot stake while unstake pending`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1635,8 +1658,8 @@ async function runTests() {
   });
 
   // Test: Cannot request unstake twice
-  await test('Cooldown: cannot request unstake twice', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Cooldown: cannot request unstake twice`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1667,8 +1690,8 @@ async function runTests() {
   });
 
   // Test: Existing pools (zero reserved fields) work unchanged
-  await test('Backward compat: existing pool works with zero settings', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Backward compat: existing pool works with zero settings`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -1695,8 +1718,8 @@ async function runTests() {
   console.log('\n--- Mathematical Correctness Tests ---\n');
 
   // Test: Weight formula verification - new staker gains weight over old staker
-  await test('Math: New staker weight increases relative to old staker', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Math: New staker weight increases relative to old staker`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -1767,8 +1790,8 @@ async function runTests() {
   });
 
   // Test: Old staker gets more than new staker
-  await test('Math: Old staker gets more rewards than new staker', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Math: Old staker gets more rewards than new staker`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -1839,8 +1862,8 @@ async function runTests() {
   });
 
   // Test: Equal stakers get equal rewards (when both matured)
-  await test('Math: Equal age stakers get equal rewards (matured)', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Math: Equal age stakers get equal rewards (matured)`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -1898,8 +1921,8 @@ async function runTests() {
   });
 
   // Test: 2x stake = 2x rewards (when both fully matured)
-  await test('Math: Double stake gets double rewards (matured)', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Math: Double stake gets double rewards (matured)`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -1955,8 +1978,8 @@ async function runTests() {
   });
 
   // Test: Verify weight differentiation between old and new staker
-  await test('Math: Older staker gets proportionally more rewards', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Math: Older staker gets proportionally more rewards`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -2026,8 +2049,8 @@ async function runTests() {
   console.log('\n--- Abuse / Security Tests ---\n');
 
   // Test: Sybil attack - splitting stake doesn't give advantage
-  await test('Abuse: Sybil attack (split stake) gives no advantage', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Abuse: Sybil attack (split stake) gives no advantage`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -2089,8 +2112,8 @@ async function runTests() {
   });
 
   // Test: Flash stake attack - staking right before deposit
-  await test('Abuse: Flash stake attack (stake before deposit) fails', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Abuse: Flash stake attack (stake before deposit) fails`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -2147,8 +2170,8 @@ async function runTests() {
   });
 
   // Test: Cannot unstake more than staked
-  await test('Abuse: Cannot unstake more than staked', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Abuse: Cannot unstake more than staked`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(100));
@@ -2174,8 +2197,8 @@ async function runTests() {
   });
 
   // Test: Cannot profit from claim after full unstake
-  await test('Abuse: Cannot claim after full unstake', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Abuse: Cannot claim after full unstake`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60));
@@ -2213,8 +2236,8 @@ async function runTests() {
   });
 
   // Test: Cannot double claim
-  await test('Abuse: Cannot double claim same rewards', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Abuse: Cannot double claim same rewards`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60));
@@ -2262,8 +2285,8 @@ async function runTests() {
   });
 
   // Test: Stake/unstake cycling doesn't reset weight unfairly
-  await test('Abuse: Stake/unstake cycling resets weight', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Abuse: Stake/unstake cycling resets weight`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -2319,8 +2342,8 @@ async function runTests() {
   });
 
   // Test: Zero amount operations fail
-  await test('Abuse: Zero amount operations rejected', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Abuse: Zero amount operations rejected`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(100));
@@ -2387,8 +2410,8 @@ async function runTests() {
   // Test: Frontrunning deposit with equal stake
   // Note: With vastly different stake amounts, the attacker may still win on absolute weight
   // This test verifies that equal stakes favor the mature staker
-  await test('Abuse: Frontrunning deposit (equal stakes)', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Abuse: Frontrunning deposit (equal stakes)`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -2452,8 +2475,8 @@ async function runTests() {
   console.log('\n--- Security Regression Tests ---\n');
 
   // Test: DepositRewards + SyncRewards does not double-count
-  await test('Security: DepositRewards + SyncRewards does not double-count', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Security: DepositRewards + SyncRewards does not double-count`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // Minimum tau
@@ -2493,8 +2516,8 @@ async function runTests() {
   });
 
   // Test: Additional stake does not allow reward theft
-  await test('Security: Additional stake does not allow reward theft', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Security: Additional stake does not allow reward theft`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // Minimum tau
@@ -2546,8 +2569,8 @@ async function runTests() {
   });
 
   // Test: Claim then SyncRewards works for new deposits
-  await test('Security: Claim then SyncRewards works for new deposits', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Security: Claim then SyncRewards works for new deposits`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // Minimum tau
@@ -2590,8 +2613,8 @@ async function runTests() {
   });
 
   // Test: Unstake rewards then SyncRewards works
-  await test('Security: Unstake rewards then SyncRewards works', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Security: Unstake rewards then SyncRewards works`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // Minimum tau
@@ -2644,8 +2667,8 @@ async function runTests() {
   console.log('\n--- Stress Tests (simulating 1M stakers) ---\n');
 
   // Test: Large stake amount (simulating pool with many existing stakers)
-  await test('Stress: Stake with large existing total', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Stress: Stake with large existing total`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000)); // 30 days tau
@@ -2687,8 +2710,8 @@ async function runTests() {
   });
 
   // Test: Deposit rewards with large total stake
-  await test('Stress: Deposit rewards with 1M staker simulation', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Stress: Deposit rewards with 1M staker simulation`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(100)); // Short tau for weight accumulation
@@ -2714,8 +2737,8 @@ async function runTests() {
   });
 
   // Test: Claim rewards with large accumulated rewards
-  await test('Stress: Claim with large reward accumulator', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Stress: Claim with large reward accumulator`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // Minimum tau
@@ -2744,8 +2767,8 @@ async function runTests() {
   });
 
   // Test: Unstake with large pool values
-  await test('Stress: Unstake with large pool values', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Stress: Unstake with large pool values`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(2592000));
@@ -2778,8 +2801,8 @@ async function runTests() {
   });
 
   // Test: SyncRewards with large pool
-  await test('Stress: SyncRewards with large pool', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Stress: SyncRewards with large pool`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // Minimum tau
@@ -2805,8 +2828,8 @@ async function runTests() {
   });
 
   // Test: Many sequential operations (verify no state bloat)
-  await test('Stress: Sequential operations (no state bloat)', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Stress: Sequential operations (no state bloat)`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // Minimum tau
@@ -2858,8 +2881,8 @@ async function runTests() {
   });
 
   // Test: Compute units estimation via simulation
-  await test('Stress: Compute units check', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Stress: Compute units check`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(100));
@@ -2905,8 +2928,8 @@ async function runTests() {
   // Lifecycle Test: Multi-phase staking with full reconciliation
   // ============================================================
 
-  await test('Lifecycle: Multi-phase staking with full reconciliation', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Lifecycle: Multi-phase staking with full reconciliation`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9); // 9 decimals
     await ctx.initializePool(BigInt(60)); // tau = 60 seconds (minimum)
@@ -3115,8 +3138,8 @@ async function runTests() {
   console.log('\n--- SOL Conservation & Recovery Tests ---\n');
 
   // Test: Additional stakes don't create dead SOL (round 7 fix regression test)
-  await test('Conservation: additional stakes preserve all rewards', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Conservation: additional stakes preserve all rewards`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // 60s tau (minimum)
@@ -3222,8 +3245,8 @@ async function runTests() {
   });
 
   // Test: total_reward_debt is tracked correctly through stake/claim/unstake lifecycle
-  await test('Recovery: total_reward_debt tracking across lifecycle', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Recovery: total_reward_debt tracking across lifecycle`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // 60s tau (minimum)
@@ -3302,8 +3325,8 @@ async function runTests() {
   });
 
   // Test: Multi-staker SOL accounting — sum of all claims never exceeds deposits
-  await test('Conservation: multi-staker claims never exceed deposits', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Conservation: multi-staker claims never exceed deposits`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // 60s tau (minimum)
@@ -3401,11 +3424,12 @@ async function runTests() {
     console.log(`    Conservation OK (diff=${diff} lamports)`);
   });
 
-  // ==================== METADATA TESTS ====================
+  // ==================== METADATA TESTS (Token 2022 only) ====================
+  if (tokenProgramId.equals(TOKEN_2022_PROGRAM_ID)) {
 
   // Test: SetPoolMetadata creates metadata account
-  await test('SetPoolMetadata creates metadata account', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] SetPoolMetadata creates metadata account`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMintWithMetadata(9, 'Tibanne Thecat', 'ChiefPussy');
     await ctx.initializePool(BigInt(2592000));
@@ -3441,8 +3465,8 @@ async function runTests() {
   });
 
   // Test: SetPoolMetadata is idempotent (re-calling updates without changing data)
-  await test('SetPoolMetadata is idempotent', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] SetPoolMetadata is idempotent`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMintWithMetadata(9, 'TestToken', 'TEST');
     await ctx.initializePool(BigInt(2592000));
@@ -3460,8 +3484,8 @@ async function runTests() {
   });
 
   // Test: SetPoolMetadata is permissionless
-  await test('SetPoolMetadata is permissionless', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] SetPoolMetadata is permissionless`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMintWithMetadata(9, 'PermTest', 'PERM');
     await ctx.initializePool(BigInt(2592000));
@@ -3479,8 +3503,8 @@ async function runTests() {
   });
 
   // Test: SetPoolMetadata handles trailing spaces in token name
-  await test('SetPoolMetadata trims token name whitespace', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] SetPoolMetadata trims token name whitespace`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     // Note: Token 2022 metadata stores the name as-is (with trailing space)
     await ctx.createMintWithMetadata(9, 'Tibanne Thecat ', 'ChiefPussy');
@@ -3496,8 +3520,8 @@ async function runTests() {
   });
 
   // Test: Stake with metadata increments member_count
-  await test('Stake with metadata increments member_count', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Stake with metadata increments member_count`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMintWithMetadata(9, 'MemberTest', 'MEM');
     await ctx.initializePool(BigInt(2592000));
@@ -3528,8 +3552,8 @@ async function runTests() {
   });
 
   // Test: Additional stake does NOT increment member_count (not new)
-  await test('Additional stake does not increment member_count', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Additional stake does not increment member_count`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMintWithMetadata(9, 'AddStake', 'ADD');
     await ctx.initializePool(BigInt(2592000));
@@ -3552,8 +3576,8 @@ async function runTests() {
   });
 
   // Test: CloseStakeAccount with metadata decrements member_count
-  await test('CloseStakeAccount with metadata decrements member_count', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] CloseStakeAccount with metadata decrements member_count`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMintWithMetadata(9, 'CloseTest', 'CLZ');
     await ctx.initializePool(BigInt(2592000));
@@ -3579,8 +3603,8 @@ async function runTests() {
   });
 
   // Test: SetPoolMetadata preserves member_count on update
-  await test('SetPoolMetadata preserves member_count on update', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] SetPoolMetadata preserves member_count on update`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMintWithMetadata(9, 'PreserveCount', 'PRS');
     await ctx.initializePool(BigInt(2592000));
@@ -3603,8 +3627,8 @@ async function runTests() {
   });
 
   // Test: Stake without metadata account still works (backwards compatible)
-  await test('Stake without metadata account is backwards compatible', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Stake without metadata account is backwards compatible`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMintWithMetadata(9, 'BackCompat', 'BCK');
     await ctx.initializePool(BigInt(2592000));
@@ -3623,11 +3647,13 @@ async function runTests() {
     if (meta.memberCount !== 0n) throw new Error(`Expected 0 (no metadata passed), got ${meta.memberCount}`);
   });
 
+  } // end Token 2022-only metadata tests
+
   // === Repeated Claim Exploit Tests (round 10b fix) ===
 
   // Test: Repeated claims do NOT extract max-weight rewards
-  await test('Security: Repeated claims cannot extract max-weight rewards', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Security: Repeated claims cannot extract max-weight rewards`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
 
@@ -3683,8 +3709,8 @@ async function runTests() {
   });
 
   // Test: Second claim returns 0 when no new rewards deposited
-  await test('Security: Second claim returns 0 without new rewards', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Security: Second claim returns 0 without new rewards`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60));
@@ -3730,8 +3756,8 @@ async function runTests() {
   });
 
   // Test: Claiming frequency doesn't affect total rewards (frequency-independent)
-  await test('Security: Claim frequency does not affect total rewards', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Security: Claim frequency does not affect total rewards`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60));
@@ -3798,8 +3824,8 @@ async function runTests() {
   });
 
   // Test: total_rewards_claimed field tracks correctly
-  await test('Accounting: total_rewards_claimed increments on claim', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Accounting: total_rewards_claimed increments on claim`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60));
@@ -3854,8 +3880,8 @@ async function runTests() {
   });
 
   // Test: total_rewards_claimed increments on auto-claim during additional stake
-  await test('Accounting: total_rewards_claimed increments on auto-claim stake', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Accounting: total_rewards_claimed increments on auto-claim stake`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60));
@@ -3889,8 +3915,8 @@ async function runTests() {
   });
 
   // Test: total_rewards_claimed increments on unstake with reward payout
-  await test('Accounting: total_rewards_claimed increments on unstake', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Accounting: total_rewards_claimed increments on unstake`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60));
@@ -3919,8 +3945,8 @@ async function runTests() {
     }
   });
 
-  await test('Security: Large stake amounts don\'t overflow reward math', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Security: Large stake amounts don't overflow reward math`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60));
@@ -3965,8 +3991,8 @@ async function runTests() {
     console.log('    Full unstake succeeded, token balance restored');
   });
 
-  await test('Security: Claim capped at available pool balance (exact drain)', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Security: Claim capped at available pool balance (exact drain)`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60));
@@ -4036,8 +4062,8 @@ async function runTests() {
     console.log(`    Total claimed (${totalClaimed}) <= deposited (${tinyDeposit}): OK`);
   });
 
-  await test('Security: Sandwich attack (stake between deposit and sync) gives no advantage', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] Security: Sandwich attack (stake between deposit and sync) gives no advantage`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60));
@@ -4119,8 +4145,8 @@ async function runTests() {
   console.log('\n--- Add-Stake Tests ---\n');
 
   // Test: exp_start_factor and pending rewards unchanged after add-stake
-  await test('AddStake: maturity preserved — exp_start_factor unchanged', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] AddStake: maturity preserved — exp_start_factor unchanged`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // 60s tau
@@ -4174,8 +4200,8 @@ async function runTests() {
   });
 
   // Test: Pending rewards unchanged by add-stake (claim before == claim after)
-  await test('AddStake: pending rewards unchanged by add-stake', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] AddStake: pending rewards unchanged by add-stake`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // 60s tau
@@ -4214,8 +4240,8 @@ async function runTests() {
   });
 
   // Test: SOL continues to mature after add-stake
-  await test('AddStake: SOL continues to mature after add-stake', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] AddStake: SOL continues to mature after add-stake`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // 60s tau
@@ -4260,8 +4286,8 @@ async function runTests() {
   });
 
   // Test: Conservation — add-stake doesn't create or destroy rewards
-  await test('AddStake: conservation — total claimed ≤ total deposited', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] AddStake: conservation — total claimed ≤ total deposited`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // 60s tau
@@ -4334,8 +4360,8 @@ async function runTests() {
   });
 
   // Test: Dust-stake provides no advantage over simply claiming
-  await test('AddStake: dust-stake yields no extra rewards vs plain claim', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] AddStake: dust-stake yields no extra rewards vs plain claim`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // 60s tau
@@ -4399,8 +4425,8 @@ async function runTests() {
 
   // ========== StakeOnBehalf Tests ==========
 
-  await test('StakeOnBehalf: stake on behalf of another user', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] StakeOnBehalf: stake on behalf of another user`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // tau = 60s for fast maturity
@@ -4446,8 +4472,8 @@ async function runTests() {
     console.log('    Stake on behalf created successfully, owner = B');
   });
 
-  await test('StakeOnBehalf: beneficiary can claim rewards', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] StakeOnBehalf: beneficiary can claim rewards`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // tau = 60s
@@ -4484,8 +4510,8 @@ async function runTests() {
     console.log(`    B received ${rewardReceived} lamports in rewards`);
   });
 
-  await test('StakeOnBehalf: add-more preserves pending rewards for beneficiary', async () => {
-    const ctx = new TestContext(connection, Keypair.generate(), programAuthority);
+  await test(`[${tokenProgramLabel}] StakeOnBehalf: add-more preserves pending rewards for beneficiary`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(BigInt(60)); // tau = 60s
@@ -4536,8 +4562,8 @@ async function runTests() {
   // =========================================================================
 
   // Test: FixStakeAccount corrects exp_start_factor and reward_debt
-  await test('FixStakeAccount: corrects user state and pool aggregates', async () => {
-    const ctx = new TestContext(connection, payer, programAuthority);
+  await test(`[${tokenProgramLabel}] FixStakeAccount: corrects user state and pool aggregates`, async () => {
+    const ctx = new TestContext(connection, payer, programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(5n); // tau = 5s
@@ -4585,8 +4611,8 @@ async function runTests() {
   });
 
   // Test: FixStakeAccount rejects non-upgrade-authority signer
-  await test('FixStakeAccount: rejects non-upgrade-authority', async () => {
-    const ctx = new TestContext(connection, payer, programAuthority);
+  await test(`[${tokenProgramLabel}] FixStakeAccount: rejects non-upgrade-authority`, async () => {
+    const ctx = new TestContext(connection, payer, programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(5n);
@@ -4610,8 +4636,8 @@ async function runTests() {
   });
 
   // Test: FixStakeAccount allows user to claim corrected rewards
-  await test('FixStakeAccount: user can claim corrected rewards after fix', async () => {
-    const ctx = new TestContext(connection, payer, programAuthority);
+  await test(`[${tokenProgramLabel}] FixStakeAccount: user can claim corrected rewards after fix`, async () => {
+    const ctx = new TestContext(connection, payer, programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(5n); // tau = 5s
@@ -4664,8 +4690,8 @@ async function runTests() {
   });
 
   // Test: FixStakeAccount rejects zero-balance stake
-  await test('FixStakeAccount: rejects zero-balance stake account', async () => {
-    const ctx = new TestContext(connection, payer, programAuthority);
+  await test(`[${tokenProgramLabel}] FixStakeAccount: rejects zero-balance stake account`, async () => {
+    const ctx = new TestContext(connection, payer, programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMint(9);
     await ctx.initializePool(5n);
@@ -4687,6 +4713,8 @@ async function runTests() {
       console.log('    Correctly rejected zero-balance stake account');
     }
   });
+
+  } // end of token program loop
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
   process.exit(failed > 0 ? 1 : 0);
