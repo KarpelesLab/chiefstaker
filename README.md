@@ -78,6 +78,7 @@ Rewards can be deposited directly via instruction or sent to the pool PDA (e.g.,
 | 14 | `SetPoolMetadata` | Set pool name, tags, and URL (permissionless) |
 | 15 | `TakeFeeOwnership` | Claim pump.fun creator fee revenue for the pool |
 | 16 | `StakeOnBehalf` | Stake tokens on behalf of another user (beneficiary) |
+| 17 | `FixStakeAccount` | Fix a user's corrupted stake account (program upgrade authority only) |
 
 ## Pool Settings
 
@@ -133,6 +134,7 @@ This runs `solana-verify verify-from-repo --remote` against the deployed program
 - **Add-stake maturity preservation**: on additional stake, `exp_start_factor` is unchanged (maturity depends only on start time, not amount). Pending rewards (vested and immature) carry over seamlessly. New tokens get a fresh `reward_debt` snapshot so they don't earn prior rewards. This prevents the dust-stake exploit while preserving all earned SOL across add-stake operations.
 - **StakeOnBehalf**: new instruction allowing any signer to stake tokens on behalf of a beneficiary. The staker pays rent and provides tokens; the beneficiary owns the position.
 - **TakeFeeOwnership**: new instruction to claim pump.fun creator fee revenue for the pool, setting the pool PDA as sole fee recipient and revoking the authority.
+- **FixStakeAccount**: program upgrade authority instruction to fix a user's `exp_start_factor` and `reward_debt` corrupted by the old add-stake blending bug. After the fix, the user can claim corrected rewards via normal `ClaimRewards`.
 - **FixTotalRewardDebt** (deprecated): was a one-time admin instruction to correct `total_reward_debt`. Slot 13 retained as no-op for ABI compatibility.
 - **solana-security-txt**: embedded security contact info readable by explorers and auditors.
 
@@ -168,6 +170,7 @@ programs/chiefstaker/src/
     set_metadata.rs               # SetPoolMetadata
     take_fee_ownership.rs         # TakeFeeOwnership
     stake_on_behalf.rs            # StakeOnBehalf
+    distribute_surplus.rs         # FixStakeAccount
 tests/typescript/
   test_staking.ts                 # E2E tests
 ```

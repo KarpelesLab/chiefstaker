@@ -221,11 +221,25 @@ pub enum StakingInstruction {
     /// 3. `[writable]` Staker's token account
     /// 4. `[]` Token mint
     /// 5. `[writable, signer]` Staker (payer + token source)
-    /// 6. `[writable]` Beneficiary (receives position + auto-claimed rewards)
+    /// 6. `[writable]` Beneficiary (receives position)
     /// 7. `[]` System program
     /// 8. `[]` Token 2022 program
     StakeOnBehalf {
         amount: u64,
+    },
+
+    /// Fix a user's stake account corrupted by the add-stake blending bug.
+    /// Sets exp_start_factor and reward_debt to correct values.
+    /// (program upgrade authority only)
+    ///
+    /// Accounts:
+    /// 0. `[writable]` Pool account
+    /// 1. `[writable]` User stake account
+    /// 2. `[signer]`   Program upgrade authority
+    /// 3. `[]`         ProgramData account
+    FixStakeAccount {
+        new_exp_start_factor: u128,
+        new_reward_debt: u128,
     },
 }
 
@@ -338,6 +352,18 @@ pub fn process_instruction(
         StakingInstruction::StakeOnBehalf { amount } => {
             msg!("Instruction: StakeOnBehalf (amount={})", amount);
             process_stake_on_behalf(program_id, accounts, amount)
+        }
+        StakingInstruction::FixStakeAccount {
+            new_exp_start_factor,
+            new_reward_debt,
+        } => {
+            msg!("Instruction: FixStakeAccount");
+            process_fix_stake_account(
+                program_id,
+                accounts,
+                new_exp_start_factor,
+                new_reward_debt,
+            )
         }
     }
 }

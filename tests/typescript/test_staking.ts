@@ -66,6 +66,7 @@ enum InstructionType {
   SetPoolMetadata = 14,
   TakeFeeOwnership = 15,
   StakeOnBehalf = 16,
+  FixStakeAccount = 17,
 }
 
 // Helper to derive PDAs
@@ -246,6 +247,42 @@ function createSyncRewardsInstruction(pool: PublicKey): TransactionInstruction {
   return new TransactionInstruction({
     keys: [
       { pubkey: pool, isSigner: false, isWritable: true },
+    ],
+    programId: PROGRAM_ID,
+    data,
+  });
+}
+
+function createFixStakeAccountInstruction(
+  pool: PublicKey,
+  userStake: PublicKey,
+  authority: PublicKey,
+  newExpStartFactor: bigint,
+  newRewardDebt: bigint,
+): TransactionInstruction {
+  // Borsh: u8 variant + u128 new_exp_start_factor + u128 new_reward_debt = 1 + 16 + 16 = 33
+  const data = Buffer.alloc(1 + 16 + 16);
+  data.writeUInt8(InstructionType.FixStakeAccount, 0);
+  // Write u128 LE (16 bytes) for new_exp_start_factor
+  data.writeBigUInt64LE(newExpStartFactor & BigInt('0xFFFFFFFFFFFFFFFF'), 1);
+  data.writeBigUInt64LE((newExpStartFactor >> BigInt(64)) & BigInt('0xFFFFFFFFFFFFFFFF'), 9);
+  // Write u128 LE (16 bytes) for new_reward_debt
+  data.writeBigUInt64LE(newRewardDebt & BigInt('0xFFFFFFFFFFFFFFFF'), 17);
+  data.writeBigUInt64LE((newRewardDebt >> BigInt(64)) & BigInt('0xFFFFFFFFFFFFFFFF'), 25);
+
+  // Derive ProgramData account (BPF Loader Upgradeable PDA)
+  const BPF_LOADER_UPGRADEABLE = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
+  const [programData] = PublicKey.findProgramAddressSync(
+    [PROGRAM_ID.toBuffer()],
+    BPF_LOADER_UPGRADEABLE,
+  );
+
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: userStake, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+      { pubkey: programData, isSigner: false, isWritable: false },
     ],
     programId: PROGRAM_ID,
     data,
@@ -722,6 +759,21 @@ class TestContext {
 
     const tx = new Transaction().add(ix);
     return await sendAndConfirmTransaction(this.connection, tx, [this.payer]);
+  }
+
+  async fixStakeAccount(authority: Keypair, user: PublicKey, newExpStartFactor: bigint, newRewardDebt: bigint): Promise<string> {
+    const [userStakePDA] = deriveUserStakePDA(this.poolPDA, user);
+    const ix = createFixStakeAccountInstruction(
+      this.poolPDA,
+      userStakePDA,
+      authority.publicKey,
+      newExpStartFactor,
+      newRewardDebt,
+    );
+
+    const tx = new Transaction().add(ix);
+    const signers = authority === this.payer ? [this.payer] : [this.payer, authority];
+    return await sendAndConfirmTransaction(this.connection, tx, signers);
   }
 
   async sendSolToPool(amount: bigint): Promise<string> {
@@ -4477,6 +4529,163 @@ async function runTests() {
     }
     console.log(`    B claimed ${bRewards} lamports after add-stake on behalf`);
     console.log('    Add-more preserves pending rewards for beneficiary: OK');
+  });
+
+  // =========================================================================
+  // FixStakeAccount tests
+  // =========================================================================
+
+  // Test: FixStakeAccount corrects exp_start_factor and reward_debt
+  await test('FixStakeAccount: corrects user state and pool aggregates', async () => {
+    const ctx = new TestContext(connection, payer, programAuthority);
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(5n); // tau = 5s
+
+    const alice = Keypair.generate();
+    await airdropAndConfirm(connection, alice.publicKey, 2 * LAMPORTS_PER_SOL);
+    const aliceToken = await ctx.createUserTokenAccount(alice.publicKey);
+    await ctx.mintTokens(aliceToken, BigInt(1_000_000_000));
+
+    // Alice stakes
+    await ctx.stake(alice, aliceToken, BigInt(1_000_000_000));
+
+    // Deposit rewards so acc_rps is non-zero
+    console.log('    Waiting 3s for maturity...');
+    await new Promise(r => setTimeout(r, 3000));
+    await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL));
+
+    // Read current state
+    const stateBefore = await ctx.readUserStakeState(alice.publicKey);
+    const poolBefore = await ctx.readPoolState();
+    console.log(`    Before: exp_start_factor=${stateBefore.expStartFactor}, reward_debt=${stateBefore.rewardDebt}`);
+
+    // Fix with new values (simulate correcting a blending bug)
+    const newExpStartFactor = stateBefore.expStartFactor + 1000n;
+    const newRewardDebt = stateBefore.rewardDebt + 500n;
+    await ctx.fixStakeAccount(programAuthority, alice.publicKey, newExpStartFactor, newRewardDebt);
+
+    // Verify user state was updated
+    const stateAfter = await ctx.readUserStakeState(alice.publicKey);
+    if (stateAfter.expStartFactor !== newExpStartFactor) {
+      throw new Error(`exp_start_factor not updated: expected ${newExpStartFactor}, got ${stateAfter.expStartFactor}`);
+    }
+    if (stateAfter.rewardDebt !== newRewardDebt) {
+      throw new Error(`reward_debt not updated: expected ${newRewardDebt}, got ${stateAfter.rewardDebt}`);
+    }
+
+    // Verify pool aggregates were adjusted
+    const poolAfter = await ctx.readPoolState();
+    const debtDelta = poolAfter.totalRewardDebt - poolBefore.totalRewardDebt;
+    if (debtDelta !== 500n) {
+      throw new Error(`Pool total_reward_debt delta: expected 500, got ${debtDelta}`);
+    }
+    console.log(`    After: exp_start_factor=${stateAfter.expStartFactor}, reward_debt=${stateAfter.rewardDebt}`);
+    console.log('    Pool aggregates correctly adjusted');
+  });
+
+  // Test: FixStakeAccount rejects non-upgrade-authority signer
+  await test('FixStakeAccount: rejects non-upgrade-authority', async () => {
+    const ctx = new TestContext(connection, payer, programAuthority);
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(5n);
+
+    const alice = Keypair.generate();
+    await airdropAndConfirm(connection, alice.publicKey, 2 * LAMPORTS_PER_SOL);
+    const aliceToken = await ctx.createUserTokenAccount(alice.publicKey);
+    await ctx.mintTokens(aliceToken, BigInt(1_000_000_000));
+    await ctx.stake(alice, aliceToken, BigInt(1_000_000_000));
+
+    // Try to fix using a random keypair (not upgrade authority)
+    const faker = Keypair.generate();
+    await airdropAndConfirm(connection, faker.publicKey, LAMPORTS_PER_SOL);
+    try {
+      await ctx.fixStakeAccount(faker, alice.publicKey, 0n, 0n);
+      throw new Error('Should have rejected non-upgrade-authority');
+    } catch (e: any) {
+      if (e.message === 'Should have rejected non-upgrade-authority') throw e;
+      console.log('    Correctly rejected non-upgrade-authority signer');
+    }
+  });
+
+  // Test: FixStakeAccount allows user to claim corrected rewards
+  await test('FixStakeAccount: user can claim corrected rewards after fix', async () => {
+    const ctx = new TestContext(connection, payer, programAuthority);
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(5n); // tau = 5s
+
+    const alice = Keypair.generate();
+    await airdropAndConfirm(connection, alice.publicKey, 2 * LAMPORTS_PER_SOL);
+    const aliceToken = await ctx.createUserTokenAccount(alice.publicKey);
+    await ctx.mintTokens(aliceToken, BigInt(1_000_000_000));
+
+    // Alice stakes
+    await ctx.stake(alice, aliceToken, BigInt(1_000_000_000));
+
+    // Wait for full maturity and deposit rewards
+    console.log('    Waiting 16s for full maturity...');
+    await new Promise(r => setTimeout(r, 16000));
+    await ctx.depositRewards(BigInt(2 * LAMPORTS_PER_SOL));
+
+    // Claim once to establish baseline
+    const balBefore = BigInt(await ctx.getBalance(alice.publicKey));
+    await ctx.claimRewards(alice);
+    const balAfterFirstClaim = BigInt(await ctx.getBalance(alice.publicKey));
+    const firstClaim = balAfterFirstClaim - balBefore;
+    console.log(`    First claim: ${firstClaim} lamports`);
+
+    // Now lower reward_debt to credit alice with more rewards
+    // This simulates correcting a bug that set reward_debt too high
+    const stateNow = await ctx.readUserStakeState(alice.publicKey);
+    const poolNow = await ctx.readPoolState();
+    // Lower reward_debt by 0.5 SOL worth (in WAD-scaled u128)
+    const WAD = 1_000_000_000_000_000_000n;
+    const creditLamports = BigInt(LAMPORTS_PER_SOL / 2);
+    const debtReduction = creditLamports * WAD; // convert to reward_debt units
+    const newRewardDebt = stateNow.rewardDebt > debtReduction
+      ? stateNow.rewardDebt - debtReduction
+      : 0n;
+
+    await ctx.fixStakeAccount(programAuthority, alice.publicKey, stateNow.expStartFactor, newRewardDebt);
+
+    // Now alice should be able to claim additional rewards
+    const balBeforeSecondClaim = BigInt(await ctx.getBalance(alice.publicKey));
+    await ctx.claimRewards(alice);
+    const balAfterSecondClaim = BigInt(await ctx.getBalance(alice.publicKey));
+    const secondClaim = balAfterSecondClaim - balBeforeSecondClaim;
+    console.log(`    Second claim after fix: ${secondClaim} lamports`);
+
+    if (secondClaim <= 0n) {
+      throw new Error('Alice should have additional claimable rewards after fix');
+    }
+    console.log('    User successfully claimed corrected rewards');
+  });
+
+  // Test: FixStakeAccount rejects zero-balance stake
+  await test('FixStakeAccount: rejects zero-balance stake account', async () => {
+    const ctx = new TestContext(connection, payer, programAuthority);
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(5n);
+
+    const alice = Keypair.generate();
+    await airdropAndConfirm(connection, alice.publicKey, 2 * LAMPORTS_PER_SOL);
+    const aliceToken = await ctx.createUserTokenAccount(alice.publicKey);
+    await ctx.mintTokens(aliceToken, BigInt(1_000_000_000));
+
+    // Alice stakes then fully unstakes
+    await ctx.stake(alice, aliceToken, BigInt(1_000_000_000));
+    await ctx.unstake(alice, aliceToken, BigInt(1_000_000_000));
+
+    try {
+      await ctx.fixStakeAccount(programAuthority, alice.publicKey, 0n, 0n);
+      throw new Error('Should have rejected zero-balance stake');
+    } catch (e: any) {
+      if (e.message === 'Should have rejected zero-balance stake') throw e;
+      console.log('    Correctly rejected zero-balance stake account');
+    }
   });
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
