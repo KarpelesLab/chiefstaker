@@ -12,6 +12,7 @@ use solana_program::{
     system_instruction,
     sysvar::Sysvar,
 };
+use solana_program::program_pack::Pack;
 use spl_token_2022::{
     extension::{
         permanent_delegate::PermanentDelegate,
@@ -24,7 +25,7 @@ use spl_token_2022::{
 
 use crate::{
     error::StakingError,
-    state::{StakingPool, POOL_SEED, TOKEN_VAULT_SEED},
+    state::{is_valid_token_program, StakingPool, POOL_SEED, TOKEN_VAULT_SEED},
 };
 
 /// Initialize a new staking pool
@@ -52,8 +53,8 @@ pub fn process_initialize_pool(
     let token_program_info = next_account_info(account_info_iter)?;
     let rent_sysvar_info = next_account_info(account_info_iter)?;
 
-    // Validate Token 2022 program
-    if *token_program_info.key != spl_token_2022::id() {
+    // Validate token program (SPL Token or Token 2022)
+    if !is_valid_token_program(token_program_info.key) {
         return Err(StakingError::InvalidTokenProgram.into());
     }
 
@@ -70,8 +71,8 @@ pub fn process_initialize_pool(
         return Err(StakingError::InvalidTau.into());
     }
 
-    // Verify mint is a Token 2022 mint
-    if *mint_info.owner != spl_token_2022::id() {
+    // Verify mint is owned by the provided token program
+    if *mint_info.owner != *token_program_info.key {
         return Err(StakingError::InvalidMintProgram.into());
     }
 
@@ -79,28 +80,32 @@ pub fn process_initialize_pool(
     let mint_data = mint_info.try_borrow_data()?;
     let mint_state = StateWithExtensions::<Mint>::unpack(&mint_data)?;
 
-    // Reject mints with transfer fee extension — fee-on-transfer tokens
-    // would cause total_staked to diverge from actual vault balance,
-    // eventually bricking unstakes for later users.
-    if mint_state.get_extension::<TransferFeeConfig>().is_ok() {
-        msg!("Token 2022 mints with TransferFee extension are not supported");
-        return Err(StakingError::InvalidPoolMint.into());
-    }
+    // Reject Token 2022 mints with dangerous extensions
+    // (SPL Token mints have no extensions, so these checks are skipped naturally)
+    if *token_program_info.key == spl_token_2022::id() {
+        // Reject mints with transfer fee extension — fee-on-transfer tokens
+        // would cause total_staked to diverge from actual vault balance,
+        // eventually bricking unstakes for later users.
+        if mint_state.get_extension::<TransferFeeConfig>().is_ok() {
+            msg!("Token 2022 mints with TransferFee extension are not supported");
+            return Err(StakingError::InvalidPoolMint.into());
+        }
 
-    // Reject mints with PermanentDelegate — the delegate can transfer tokens
-    // out of the vault at any time, breaking the total_staked invariant and
-    // enabling theft of all staked tokens.
-    if mint_state.get_extension::<PermanentDelegate>().is_ok() {
-        msg!("Token 2022 mints with PermanentDelegate extension are not supported");
-        return Err(StakingError::UnsupportedMintExtension.into());
-    }
+        // Reject mints with PermanentDelegate — the delegate can transfer tokens
+        // out of the vault at any time, breaking the total_staked invariant and
+        // enabling theft of all staked tokens.
+        if mint_state.get_extension::<PermanentDelegate>().is_ok() {
+            msg!("Token 2022 mints with PermanentDelegate extension are not supported");
+            return Err(StakingError::UnsupportedMintExtension.into());
+        }
 
-    // Reject mints with TransferHook — allows arbitrary program execution
-    // during every transfer CPI (stake/unstake), which could manipulate
-    // state or extract MEV.
-    if mint_state.get_extension::<TransferHook>().is_ok() {
-        msg!("Token 2022 mints with TransferHook extension are not supported");
-        return Err(StakingError::UnsupportedMintExtension.into());
+        // Reject mints with TransferHook — allows arbitrary program execution
+        // during every transfer CPI (stake/unstake), which could manipulate
+        // state or extract MEV.
+        if mint_state.get_extension::<TransferHook>().is_ok() {
+            msg!("Token 2022 mints with TransferHook extension are not supported");
+            return Err(StakingError::UnsupportedMintExtension.into());
+        }
     }
 
     // Derive and verify pool PDA
@@ -140,13 +145,17 @@ pub fn process_initialize_pool(
         &[pool_seeds],
     )?;
 
-    // Create token vault account (Token 2022 account)
+    // Create token vault account
     let vault_seeds = &[TOKEN_VAULT_SEED, pool_info.key.as_ref(), &[vault_bump]];
 
-    // Get the size needed for a token account (with potential extensions)
-    let vault_size = spl_token_2022::extension::ExtensionType::try_calculate_account_len::<
-        spl_token_2022::state::Account,
-    >(&[])?;
+    // Get the size needed for a token account
+    let vault_size = if *token_program_info.key == spl_token_2022::id() {
+        spl_token_2022::extension::ExtensionType::try_calculate_account_len::<
+            spl_token_2022::state::Account,
+        >(&[])?
+    } else {
+        spl_token_2022::state::Account::LEN
+    };
     let vault_rent = rent.minimum_balance(vault_size);
 
     invoke_signed(
@@ -155,7 +164,7 @@ pub fn process_initialize_pool(
             token_vault_info.key,
             vault_rent,
             vault_size as u64,
-            &spl_token_2022::id(),
+            token_program_info.key,
         ),
         &[
             authority_info.clone(),
@@ -168,7 +177,7 @@ pub fn process_initialize_pool(
     // Initialize token vault as token account
     invoke_signed(
         &spl_token_2022::instruction::initialize_account3(
-            &spl_token_2022::id(),
+            token_program_info.key,
             token_vault_info.key,
             mint_info.key,
             pool_info.key, // Pool PDA is the owner of the vault

@@ -55,7 +55,7 @@ pub enum StakingError {
     #[error("Pool requires sync before operation")]
     PoolRequiresSync,
 
-    #[error("Invalid mint - must be Token 2022")]
+    #[error("Invalid mint - must be Token or Token 2022")]
     InvalidMintProgram,
 
     #[error("Missing required signer")]
@@ -97,7 +97,7 @@ pub enum StakingError {
     #[error("User stake account still has balance or pending requests")]
     AccountNotEmpty,
 
-    #[error("Invalid Token 2022 program")]
+    #[error("Invalid token program")]
     InvalidTokenProgram,
 
     #[error("Token mint has a dangerous extension (PermanentDelegate, TransferHook, etc.)")]

@@ -12,6 +12,19 @@ pub const STAKE_SEED: &[u8] = b"stake";
 pub const TOKEN_VAULT_SEED: &[u8] = b"token_vault";
 pub const METADATA_SEED: &[u8] = b"metadata";
 
+/// The original SPL Token program ID (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA)
+pub const SPL_TOKEN_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
+    0x06, 0xdd, 0xf6, 0xe1, 0xd7, 0x65, 0xa1, 0x93,
+    0xd9, 0xcb, 0xe1, 0x46, 0xce, 0xeb, 0x79, 0xac,
+    0x1c, 0xb4, 0x85, 0xed, 0x5f, 0x5b, 0x37, 0x91,
+    0x3a, 0x8c, 0xf5, 0x85, 0x7e, 0xff, 0x00, 0xa9,
+]);
+
+/// Check if a program ID is a valid token program (SPL Token or Token 2022)
+pub fn is_valid_token_program(key: &Pubkey) -> bool {
+    *key == spl_token_2022::id() || *key == SPL_TOKEN_PROGRAM_ID
+}
+
 
 /// Account discriminators
 pub const POOL_DISCRIMINATOR: [u8; 8] = [0xc7, 0x5f, 0x7e, 0x2d, 0x3b, 0x1a, 0x9c, 0x4e];
@@ -595,5 +608,21 @@ mod tests {
         let deserialized = UserStake::try_from_slice(&serialized).unwrap();
         assert_eq!(deserialized.total_rewards_claimed, 999_999);
         assert_eq!(deserialized.claimed_rewards_wad, 42_000_000_000_000_000_000);
+    }
+
+    #[test]
+    fn test_spl_token_program_id() {
+        // Verify our constant matches the canonical SPL Token program ID
+        let expected: Pubkey = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            .parse()
+            .unwrap();
+        assert_eq!(SPL_TOKEN_PROGRAM_ID, expected);
+    }
+
+    #[test]
+    fn test_is_valid_token_program() {
+        assert!(is_valid_token_program(&spl_token_2022::id()));
+        assert!(is_valid_token_program(&SPL_TOKEN_PROGRAM_ID));
+        assert!(!is_valid_token_program(&Pubkey::default()));
     }
 }

@@ -16,7 +16,7 @@ use crate::{
     error::StakingError,
     events::{emit_reward_payout, RewardPayoutType},
     math::{calculate_user_weighted_stake, wad_div, wad_mul, U256, WAD},
-    state::{StakingPool, UserStake, POOL_SEED},
+    state::{is_valid_token_program, StakingPool, UserStake, POOL_SEED},
 };
 
 /// Shared unstake logic used by both process_unstake and process_complete_unstake.
@@ -185,7 +185,7 @@ pub fn execute_unstake<'a>(
 
     invoke_signed(
         &spl_token_2022::instruction::transfer_checked(
-            &spl_token_2022::id(),
+            mint_info.owner,
             token_vault_info.key,
             mint_info.key,
             user_token_info.key,
@@ -246,8 +246,8 @@ pub fn process_unstake(
     let user_info = next_account_info(account_info_iter)?;
     let token_program_info = next_account_info(account_info_iter)?;
 
-    // Validate Token 2022 program
-    if *token_program_info.key != spl_token_2022::id() {
+    // Validate token program (SPL Token or Token 2022)
+    if !is_valid_token_program(token_program_info.key) {
         return Err(StakingError::InvalidTokenProgram.into());
     }
 
