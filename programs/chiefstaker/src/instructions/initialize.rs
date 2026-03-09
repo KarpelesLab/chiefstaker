@@ -12,20 +12,26 @@ use solana_program::{
     system_instruction,
     sysvar::Sysvar,
 };
+use solana_program::program_option::COption;
 use solana_program::program_pack::Pack;
 use spl_token_2022::{
     extension::{
         permanent_delegate::PermanentDelegate,
         transfer_fee::TransferFeeConfig,
         transfer_hook::TransferHook,
-        BaseStateWithExtensions, StateWithExtensions,
+        BaseStateWithExtensions, PodStateWithExtensions, StateWithExtensions,
     },
+    pod::PodMint,
     state::Mint,
 };
+use spl_token_metadata_interface::state::TokenMetadata;
 
 use crate::{
     error::StakingError,
-    state::{is_valid_token_program, StakingPool, POOL_SEED, TOKEN_VAULT_SEED},
+    state::{
+        is_valid_token_program, StakingPool, METAPLEX_PROGRAM_ID, PFEE_PROGRAM_ID,
+        PFEE_SHARING_CONFIG_DISC, POOL_SEED, TOKEN_VAULT_SEED,
+    },
 };
 
 /// Initialize a new staking pool
@@ -106,6 +112,85 @@ pub fn process_initialize_pool(
             msg!("Token 2022 mints with TransferHook extension are not supported");
             return Err(StakingError::UnsupportedMintExtension.into());
         }
+    }
+
+    // === Authority check: signer must match a known authority for this mint ===
+    let mut authority_verified = false;
+
+    // 1. Token 2022: check metadata update_authority
+    if *token_program_info.key == spl_token_2022::id() {
+        let pod_mint = PodStateWithExtensions::<PodMint>::unpack(&mint_data)?;
+        if let Ok(token_metadata) = pod_mint.get_variable_len_extension::<TokenMetadata>() {
+            let update_auth_option: Option<Pubkey> = token_metadata.update_authority.into();
+            let update_auth = update_auth_option.unwrap_or_default();
+            if update_auth != Pubkey::default() && update_auth == *authority_info.key {
+                authority_verified = true;
+            }
+        }
+    }
+
+    // 2. Check mint_authority (works for both SPL Token and Token 2022)
+    if !authority_verified {
+        if let COption::Some(mint_auth) = mint_state.base.mint_authority {
+            if mint_auth == *authority_info.key {
+                authority_verified = true;
+            }
+        }
+    }
+
+    // 3–4. Check remaining accounts (Metaplex metadata, pfee SharingConfig)
+    if !authority_verified {
+        while let Ok(proof_info) = next_account_info(account_info_iter) {
+            // 3. Metaplex metadata: owner=metaqbxx, PDA=["metadata", program, mint]
+            if *proof_info.owner == METAPLEX_PROGRAM_ID {
+                let (expected_pda, _) = Pubkey::find_program_address(
+                    &[
+                        b"metadata",
+                        METAPLEX_PROGRAM_ID.as_ref(),
+                        mint_info.key.as_ref(),
+                    ],
+                    &METAPLEX_PROGRAM_ID,
+                );
+                if *proof_info.key == expected_pda {
+                    let data = proof_info.try_borrow_data()?;
+                    // Metaplex metadata: byte 0 = key, bytes 1-32 = update_authority
+                    if data.len() >= 33 {
+                        let update_auth = Pubkey::try_from(&data[1..33]).unwrap();
+                        if update_auth != Pubkey::default() && update_auth == *authority_info.key {
+                            authority_verified = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 4. pfee SharingConfig: owner=pfee, PDA=["sharing-config", mint]
+            if *proof_info.owner == PFEE_PROGRAM_ID {
+                let (expected_pda, _) = Pubkey::find_program_address(
+                    &[b"sharing-config", mint_info.key.as_ref()],
+                    &PFEE_PROGRAM_ID,
+                );
+                if *proof_info.key == expected_pda {
+                    let data = proof_info.try_borrow_data()?;
+                    // Anchor: 8-byte discriminator + bump(1) + version(1) + status(1) + mint(32) + admin(32)
+                    if data.len() >= 75 && data[..8] == PFEE_SHARING_CONFIG_DISC {
+                        let admin = Pubkey::try_from(&data[43..75]).unwrap();
+                        if admin == *authority_info.key {
+                            authority_verified = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !authority_verified {
+        msg!(
+            "Signer does not match any known authority for mint {}",
+            mint_info.key
+        );
+        return Err(StakingError::InvalidAuthority.into());
     }
 
     // Derive and verify pool PDA

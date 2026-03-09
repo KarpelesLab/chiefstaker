@@ -604,7 +604,7 @@ class TestContext {
     this.payer = payer;
     this.programAuthority = programAuthority;
     this.tokenProgramId = tokenProgramId;
-    this.mintAuthority = Keypair.generate();
+    this.mintAuthority = this.payer; // Pool creator must be mint authority
   }
 
   async setup() {
@@ -614,13 +614,6 @@ class TestContext {
       10 * LAMPORTS_PER_SOL
     );
     await this.connection.confirmTransaction(airdropSig);
-
-    // Airdrop to mint authority
-    const airdropSig2 = await this.connection.requestAirdrop(
-      this.mintAuthority.publicKey,
-      1 * LAMPORTS_PER_SOL
-    );
-    await this.connection.confirmTransaction(airdropSig2);
   }
 
   async createMint(decimals: number = 9): Promise<PublicKey> {
@@ -1176,6 +1169,28 @@ async function runTests() {
     const poolInfo = await connection.getAccountInfo(ctx.poolPDA);
     if (!poolInfo) throw new Error('Pool not created');
     if (poolInfo.data.length === 0) throw new Error('Pool data empty');
+  });
+
+  // Test: InitializePool rejects non-authority signer
+  await test(`[${tokenProgramLabel}] InitializePool: non-authority signer rejected`, async () => {
+    // Create a context where mintAuthority != payer
+    const specialCtx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
+    specialCtx.mintAuthority = Keypair.generate();
+    await specialCtx.setup();
+    // Airdrop to separate mint authority so createMint works
+    await airdropAndConfirm(connection, specialCtx.mintAuthority.publicKey, LAMPORTS_PER_SOL);
+    await specialCtx.createMint(9);
+
+    // initializePool signs with payer, but mint_authority is specialCtx.mintAuthority
+    // Should fail with InvalidAuthority (error code 6 = 0x6)
+    try {
+      await specialCtx.initializePool(60n);
+      throw new Error('Should have failed');
+    } catch (e: any) {
+      if (!e.message.includes('custom program error: 0x6')) {
+        throw new Error(`Expected InvalidAuthority (0x6), got: ${e.message}`);
+      }
+    }
   });
 
   // Test: Stake tokens

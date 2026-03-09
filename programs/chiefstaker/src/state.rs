@@ -25,6 +25,24 @@ pub fn is_valid_token_program(key: &Pubkey) -> bool {
     *key == spl_token_2022::id() || *key == SPL_TOKEN_PROGRAM_ID
 }
 
+/// Metaplex Token Metadata program ID (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s)
+pub const METAPLEX_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
+    0x0b, 0x70, 0x65, 0xb1, 0xe3, 0xd1, 0x7c, 0x45,
+    0x38, 0x9d, 0x52, 0x7f, 0x6b, 0x04, 0xc3, 0xcd,
+    0x58, 0xb8, 0x6c, 0x73, 0x1a, 0xa0, 0xfd, 0xb5,
+    0x49, 0xb6, 0xd1, 0xbc, 0x03, 0xf8, 0x29, 0x46,
+]);
+
+/// pfee program ID (pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ)
+pub const PFEE_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
+    0x0c, 0x35, 0xff, 0xa9, 0x05, 0x5a, 0x8e, 0x56,
+    0x8d, 0xa8, 0xf7, 0xbc, 0x07, 0x56, 0x15, 0x27,
+    0x4c, 0xf1, 0xc9, 0x2c, 0xa4, 0x1f, 0x40, 0x00,
+    0x9c, 0x51, 0x6a, 0xa4, 0x14, 0xc2, 0x7c, 0x70,
+]);
+
+/// Anchor discriminator for pfee SharingConfig account
+pub const PFEE_SHARING_CONFIG_DISC: [u8; 8] = [216, 74, 9, 0, 56, 140, 93, 75];
 
 /// Account discriminators
 pub const POOL_DISCRIMINATOR: [u8; 8] = [0xc7, 0x5f, 0x7e, 0x2d, 0x3b, 0x1a, 0x9c, 0x4e];
@@ -624,5 +642,21 @@ mod tests {
         assert!(is_valid_token_program(&spl_token_2022::id()));
         assert!(is_valid_token_program(&SPL_TOKEN_PROGRAM_ID));
         assert!(!is_valid_token_program(&Pubkey::default()));
+    }
+
+    #[test]
+    fn test_metaplex_program_id() {
+        let expected: Pubkey = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+            .parse()
+            .unwrap();
+        assert_eq!(METAPLEX_PROGRAM_ID, expected);
+    }
+
+    #[test]
+    fn test_pfee_program_id() {
+        let expected: Pubkey = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+            .parse()
+            .unwrap();
+        assert_eq!(PFEE_PROGRAM_ID, expected);
     }
 }
