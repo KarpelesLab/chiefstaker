@@ -6,14 +6,16 @@
     "spec": "0.1.0",
     "origin": "native",
     "serialization": "borsh",
-    "description": "Token 2022 staking with time-weighted rewards. Uses Borsh enum discriminators (single u8 variant index), NOT Anchor 8-byte sighashes."
+    "description": "Token staking with time-weighted rewards. Supports both SPL Token and Token 2022. Uses Borsh enum discriminators (single u8 variant index), NOT Anchor 8-byte sighashes."
   },
   "instructions": [
     {
       "name": "initializePool",
       "discriminator": [0],
       "docs": [
-        "Initialize a new staking pool for a Token 2022 mint.",
+        "Initialize a new staking pool for a token mint (SPL Token or Token 2022).",
+        "Signer must be a recognized authority for the mint (mint_authority, metadata update_authority, or pfee SharingConfig admin).",
+        "Optional remaining accounts: Metaplex metadata PDA or pfee SharingConfig PDA for authority proof.",
         "PDA seeds: [\"pool\", mint]"
       ],
       "accounts": [
@@ -24,7 +26,7 @@
         },
         {
           "name": "mint",
-          "docs": ["Token mint (Token 2022)"]
+          "docs": ["Token mint (SPL Token or Token 2022)"]
         },
         {
           "name": "tokenVault",
@@ -35,7 +37,7 @@
           "name": "authority",
           "writable": true,
           "signer": true,
-          "docs": ["Authority / payer"]
+          "docs": ["Authority / payer (must be mint_authority, metadata update_authority, or pfee admin)"]
         },
         {
           "name": "systemProgram",
@@ -44,8 +46,7 @@
         },
         {
           "name": "tokenProgram",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
-          "docs": ["Token 2022 program"]
+          "docs": ["Token program (SPL Token or Token 2022)"]
         },
         {
           "name": "rent",
@@ -65,7 +66,8 @@
       "discriminator": [1],
       "docs": [
         "Stake tokens into the pool. Creates user stake account if needed.",
-        "Auto-claims pending rewards when adding to an existing stake."
+        "Preserves maturity percentage when adding to existing stake.",
+        "Optional trailing account: PoolMetadata PDA to increment member_count on new stake."
       ],
       "accounts": [
         {
@@ -105,8 +107,7 @@
         },
         {
           "name": "tokenProgram",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
-          "docs": ["Token 2022 program"]
+          "docs": ["Token program (SPL Token or Token 2022)"]
         }
       ],
       "args": [
@@ -157,8 +158,7 @@
         },
         {
           "name": "tokenProgram",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
-          "docs": ["Token 2022 program"]
+          "docs": ["Token program (SPL Token or Token 2022)"]
         }
       ],
       "args": [
@@ -398,8 +398,7 @@
         },
         {
           "name": "tokenProgram",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
-          "docs": ["Token 2022 program"]
+          "docs": ["Token program (SPL Token or Token 2022)"]
         }
       ],
       "args": []
@@ -456,21 +455,19 @@
       "args": []
     },
     {
-      "name": "recoverStrandedRewards",
+      "name": "deprecatedSlot13",
       "discriminator": [13],
       "docs": [
-        "Recover stranded rewards stuck in the pool (permissionless).",
-        "Computes stranded amount on-chain using pool-level total_reward_debt and total_residual_unpaid tracking.",
-        "Reduces last_synced_lamports so the next sync_rewards redistributes the excess."
+        "DEPRECATED: Slot 13 reserved for ABI compatibility (was FixTotalRewardDebt).",
+        "Always returns InvalidInstructionData."
       ],
-      "accounts": [
+      "accounts": [],
+      "args": [
         {
-          "name": "pool",
-          "writable": true,
-          "docs": ["Pool account"]
+          "name": "unused",
+          "type": "u128"
         }
-      ],
-      "args": []
+      ]
     },
     {
       "name": "setPoolMetadata",
@@ -509,6 +506,201 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "takeFeeOwnership",
+      "discriminator": [15],
+      "docs": [
+        "Take fee ownership: set pool as sole fee recipient and revoke authority (permissionless crank).",
+        "Prerequisite: fee sharing authority must already have been transferred to the pool PDA.",
+        "Sets pool PDA as sole shareholder (100% / 10000 bps), then revokes fee sharing authority (irreversible)."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "docs": ["Pool account (PDA: [\"pool\", mint])"]
+        },
+        {
+          "name": "mint",
+          "docs": ["Token mint (must match pool.mint)"]
+        },
+        {
+          "name": "pfeeProgram",
+          "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+          "docs": ["pfee program"]
+        },
+        {
+          "name": "pfeeEventAuthority",
+          "docs": ["pfee event authority PDA: [\"__event_authority\"]"]
+        },
+        {
+          "name": "pumpGlobal",
+          "docs": ["pump global PDA: [\"global\"]"]
+        },
+        {
+          "name": "sharingConfig",
+          "writable": true,
+          "docs": ["pfee sharing config PDA: [\"sharing-config\", mint]"]
+        },
+        {
+          "name": "bondingCurve",
+          "docs": ["pump bonding curve PDA: [\"bonding-curve\", mint]"]
+        },
+        {
+          "name": "pumpCreatorVault",
+          "writable": true,
+          "docs": ["pump creator vault PDA: [\"creator-vault\", sharing_config]"]
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111",
+          "docs": ["System program"]
+        },
+        {
+          "name": "pumpProgram",
+          "docs": ["pump program"]
+        },
+        {
+          "name": "pumpEventAuthority",
+          "docs": ["pump event authority PDA: [\"__event_authority\"]"]
+        },
+        {
+          "name": "pumpAmmProgram",
+          "docs": ["pump AMM program"]
+        },
+        {
+          "name": "ammEventAuthority",
+          "docs": ["AMM event authority PDA: [\"__event_authority\"]"]
+        },
+        {
+          "name": "wsolMint",
+          "address": "So11111111111111111111111111111111111111112",
+          "docs": ["Wrapped SOL mint"]
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "docs": ["SPL Token program"]
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+          "docs": ["Associated Token program"]
+        },
+        {
+          "name": "coinCreatorVaultAuth",
+          "writable": true,
+          "docs": ["AMM creator vault authority PDA: [\"creator_vault\", sharing_config]"]
+        },
+        {
+          "name": "coinCreatorVaultAta",
+          "writable": true,
+          "docs": ["ATA of wSOL for coinCreatorVaultAuth"]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "stakeOnBehalf",
+      "discriminator": [16],
+      "docs": [
+        "Stake tokens on behalf of another user (beneficiary).",
+        "Staker provides tokens and pays rent; beneficiary receives the staking position.",
+        "Beneficiary does NOT need to sign.",
+        "Optional trailing account: PoolMetadata PDA to increment member_count on new stake."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true,
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "beneficiaryStake",
+          "writable": true,
+          "docs": ["Beneficiary stake account (PDA: [\"stake\", pool, beneficiary])"]
+        },
+        {
+          "name": "tokenVault",
+          "writable": true,
+          "docs": ["Token vault"]
+        },
+        {
+          "name": "stakerTokenAccount",
+          "writable": true,
+          "docs": ["Staker's token account (source of tokens)"]
+        },
+        {
+          "name": "mint",
+          "docs": ["Token mint"]
+        },
+        {
+          "name": "staker",
+          "writable": true,
+          "signer": true,
+          "docs": ["Staker (signs, pays rent, provides tokens)"]
+        },
+        {
+          "name": "beneficiary",
+          "writable": true,
+          "docs": ["Beneficiary (receives staking position, does NOT sign)"]
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111",
+          "docs": ["System program"]
+        },
+        {
+          "name": "tokenProgram",
+          "docs": ["Token program (SPL Token or Token 2022)"]
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "fixStakeAccount",
+      "discriminator": [17],
+      "docs": [
+        "Fix a user's stake account corrupted by the add-stake blending bug.",
+        "Sets exp_start_factor and reward_debt to correct values, updating pool aggregates.",
+        "Program upgrade authority only."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "writable": true,
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "userStake",
+          "writable": true,
+          "docs": ["User stake account (PDA: [\"stake\", pool, owner])"]
+        },
+        {
+          "name": "upgradeAuthority",
+          "signer": true,
+          "docs": ["Program upgrade authority"]
+        },
+        {
+          "name": "programData",
+          "docs": ["ProgramData account (derived from program_id via BPFLoaderUpgradeable)"]
+        }
+      ],
+      "args": [
+        {
+          "name": "newExpStartFactor",
+          "type": "u128"
+        },
+        {
+          "name": "newRewardDebt",
+          "type": "u128"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -546,7 +738,7 @@
           {
             "name": "mint",
             "type": "pubkey",
-            "docs": ["Token 2022 mint address"]
+            "docs": ["Token mint address (SPL Token or Token 2022)"]
           },
           {
             "name": "tokenVault",
@@ -628,7 +820,7 @@
           {
             "name": "totalRewardDebt",
             "type": "u128",
-            "docs": ["Sum of all active users' reward_debt values (WAD-scaled). Used by RecoverStrandedRewards to compute stranded rewards from pool state alone. Starts at 0 for existing pools."]
+            "docs": ["Sum of all active users' reward_debt values (WAD-scaled). Used to compute stranded rewards from pool state alone. Starts at 0 for existing pools."]
           },
           {
             "name": "totalResidualUnpaid",
@@ -891,7 +1083,7 @@
     {
       "code": 6017,
       "name": "InvalidMintProgram",
-      "msg": "Invalid mint - must be Token 2022"
+      "msg": "Invalid mint - must be Token or Token 2022"
     },
     {
       "code": 6018,
@@ -961,12 +1153,22 @@
     {
       "code": 6031,
       "name": "InvalidTokenProgram",
-      "msg": "Invalid Token 2022 program"
+      "msg": "Invalid token program"
     },
     {
       "code": 6032,
       "name": "UnsupportedMintExtension",
       "msg": "Token mint has a dangerous extension (PermanentDelegate, TransferHook, etc.)"
+    },
+    {
+      "code": 6033,
+      "name": "MissingSystemProgram",
+      "msg": "System program required for legacy account reallocation"
+    },
+    {
+      "code": 6034,
+      "name": "RewardDebtExceedsBound",
+      "msg": "New total_reward_debt exceeds maximum accumulated rewards"
     }
   ]
 }
