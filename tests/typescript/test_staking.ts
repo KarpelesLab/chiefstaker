@@ -4670,28 +4670,26 @@ async function runTests() {
     await new Promise(r => setTimeout(r, 15000));
     await ctx.depositRewards(BigInt(2 * LAMPORTS_PER_SOL));
 
-    // Claim once to establish baseline
+    // Read state before any claim — reward_debt is 0 (staked before deposits)
+    const stateBeforeFix = await ctx.readUserStakeState(alice.publicKey);
+
+    // Simulate the add-stake bug: RAISE reward_debt so the snapshot is too high,
+    // which suppresses claimable rewards.
+    const WAD = 1_000_000_000_000_000_000n;
+    const inflatedDebt = stateBeforeFix.rewardDebt + BigInt(LAMPORTS_PER_SOL) * WAD;
+    await ctx.fixStakeAccount(programAuthority, alice.publicKey, stateBeforeFix.expStartFactor, inflatedDebt);
+
+    // Claim with inflated debt — gives reduced rewards (snapshot too high)
     const balBefore = BigInt(await ctx.getBalance(alice.publicKey));
     await ctx.claimRewards(alice);
     const balAfterFirstClaim = BigInt(await ctx.getBalance(alice.publicKey));
     const firstClaim = balAfterFirstClaim - balBefore;
-    console.log(`    First claim: ${firstClaim} lamports`);
+    console.log(`    First claim (with inflated debt): ${firstClaim} lamports`);
 
-    // Now lower reward_debt to credit alice with more rewards
-    // This simulates correcting a bug that set reward_debt too high
-    const stateNow = await ctx.readUserStakeState(alice.publicKey);
-    const poolNow = await ctx.readPoolState();
-    // Lower reward_debt by 0.5 SOL worth (in WAD-scaled u128)
-    const WAD = 1_000_000_000_000_000_000n;
-    const creditLamports = BigInt(LAMPORTS_PER_SOL / 2);
-    const debtReduction = creditLamports * WAD; // convert to reward_debt units
-    const newRewardDebt = stateNow.rewardDebt > debtReduction
-      ? stateNow.rewardDebt - debtReduction
-      : 0n;
+    // Now fix: lower reward_debt back to the correct value
+    await ctx.fixStakeAccount(programAuthority, alice.publicKey, stateBeforeFix.expStartFactor, stateBeforeFix.rewardDebt);
 
-    await ctx.fixStakeAccount(programAuthority, alice.publicKey, stateNow.expStartFactor, newRewardDebt);
-
-    // Now alice should be able to claim additional rewards
+    // Alice should now be able to claim the rewards that were suppressed
     const balBeforeSecondClaim = BigInt(await ctx.getBalance(alice.publicKey));
     await ctx.claimRewards(alice);
     const balAfterSecondClaim = BigInt(await ctx.getBalance(alice.publicKey));
