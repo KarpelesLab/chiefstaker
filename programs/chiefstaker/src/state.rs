@@ -44,6 +44,14 @@ pub const PFEE_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
 /// Anchor discriminator for pfee SharingConfig account
 pub const PFEE_SHARING_CONFIG_DISC: [u8; 8] = [216, 74, 9, 0, 56, 140, 93, 75];
 
+/// PumpFun program ID (6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P)
+pub const PUMP_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
+    0x01, 0x56, 0xe0, 0xf6, 0x93, 0x66, 0x5a, 0xcf,
+    0x44, 0xdb, 0x15, 0x68, 0xbf, 0x17, 0x5b, 0xaa,
+    0x51, 0x89, 0xcb, 0x97, 0xf5, 0xd2, 0xff, 0x3b,
+    0x65, 0x5d, 0x2b, 0xb6, 0xfd, 0x6d, 0x18, 0xb0,
+]);
+
 /// Account discriminators
 pub const POOL_DISCRIMINATOR: [u8; 8] = [0xc7, 0x5f, 0x7e, 0x2d, 0x3b, 0x1a, 0x9c, 0x4e];
 pub const USER_STAKE_DISCRIMINATOR: [u8; 8] = [0xa3, 0x8b, 0x5d, 0x2f, 0x7c, 0x4a, 0x1e, 0x9d];
@@ -658,5 +666,13 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(PFEE_PROGRAM_ID, expected);
+    }
+
+    #[test]
+    fn test_pump_program_id() {
+        let expected: Pubkey = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+            .parse()
+            .unwrap();
+        assert_eq!(PUMP_PROGRAM_ID, expected);
     }
 }

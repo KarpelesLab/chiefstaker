@@ -30,7 +30,7 @@ use crate::{
     error::StakingError,
     state::{
         is_valid_token_program, StakingPool, METAPLEX_PROGRAM_ID, PFEE_PROGRAM_ID,
-        PFEE_SHARING_CONFIG_DISC, POOL_SEED, TOKEN_VAULT_SEED,
+        PFEE_SHARING_CONFIG_DISC, POOL_SEED, PUMP_PROGRAM_ID, TOKEN_VAULT_SEED,
     },
 };
 
@@ -138,7 +138,7 @@ pub fn process_initialize_pool(
         }
     }
 
-    // 3–4. Check remaining accounts (Metaplex metadata, pfee SharingConfig)
+    // 3–5. Check remaining accounts (Metaplex metadata, pfee SharingConfig, PumpFun bonding curve)
     if !authority_verified {
         while let Ok(proof_info) = next_account_info(account_info_iter) {
             // 3. Metaplex metadata: owner=metaqbxx, PDA=["metadata", program, mint]
@@ -176,6 +176,25 @@ pub fn process_initialize_pool(
                     if data.len() >= 75 && data[..8] == PFEE_SHARING_CONFIG_DISC {
                         let admin = Pubkey::try_from(&data[43..75]).unwrap();
                         if admin == *authority_info.key {
+                            authority_verified = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 5. PumpFun bonding curve: owner=pump, PDA=["bonding-curve", mint]
+            if *proof_info.owner == PUMP_PROGRAM_ID {
+                let (expected_pda, _) = Pubkey::find_program_address(
+                    &[b"bonding-curve", mint_info.key.as_ref()],
+                    &PUMP_PROGRAM_ID,
+                );
+                if *proof_info.key == expected_pda {
+                    let data = proof_info.try_borrow_data()?;
+                    // PumpFun bonding curve layout: creator pubkey at bytes 49–81
+                    if data.len() >= 81 {
+                        let creator = Pubkey::try_from(&data[49..81]).unwrap();
+                        if creator == *authority_info.key {
                             authority_verified = true;
                             break;
                         }
