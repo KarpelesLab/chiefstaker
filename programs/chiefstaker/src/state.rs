@@ -52,6 +52,17 @@ pub const PUMP_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
     0x65, 0x5d, 0x2b, 0xb6, 0xfd, 0x6d, 0x18, 0xb0,
 ]);
 
+/// PumpSwap AMM program ID (pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA)
+pub const PUMP_AMM_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
+    0x0c, 0x14, 0xde, 0xfc, 0x82, 0x5e, 0xc6, 0x76,
+    0x94, 0x25, 0x08, 0x18, 0xbb, 0x65, 0x40, 0x65,
+    0xf4, 0x29, 0x8d, 0x31, 0x56, 0xd5, 0x71, 0xb4,
+    0xd4, 0xf8, 0x09, 0x0c, 0x18, 0xe9, 0xa8, 0x63,
+]);
+
+/// Anchor discriminator for PumpSwap Pool account
+pub const PUMP_AMM_POOL_DISC: [u8; 8] = [241, 154, 109, 4, 17, 177, 109, 188];
+
 /// Account discriminators
 pub const POOL_DISCRIMINATOR: [u8; 8] = [0xc7, 0x5f, 0x7e, 0x2d, 0x3b, 0x1a, 0x9c, 0x4e];
 pub const USER_STAKE_DISCRIMINATOR: [u8; 8] = [0xa3, 0x8b, 0x5d, 0x2f, 0x7c, 0x4a, 0x1e, 0x9d];
@@ -674,5 +685,13 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(PUMP_PROGRAM_ID, expected);
+    }
+
+    #[test]
+    fn test_pump_amm_program_id() {
+        let expected: Pubkey = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+            .parse()
+            .unwrap();
+        assert_eq!(PUMP_AMM_PROGRAM_ID, expected);
     }
 }
