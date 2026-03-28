@@ -58,13 +58,19 @@ pub fn execute_unstake<'a>(
     // Track unpaid rewards (WAD-scaled) to carry forward in reward_debt
     let mut unpaid_rewards_wad: u128 = 0;
 
-    if user_weighted > 0 && pool.acc_reward_per_weighted_share > 0 {
-        // Full entitlement: user_weighted * (acc_rps - snapshot)
-        let amount_wad = (user_stake.amount as u128)
-            .checked_mul(WAD)
-            .ok_or(StakingError::MathOverflow)?;
+    // Compute delta_rps for the position being settled.  Needed for both
+    // reward payout and forfeited-immature redistribution.
+    let amount_wad = (user_stake.amount as u128)
+        .checked_mul(WAD)
+        .ok_or(StakingError::MathOverflow)?;
+    let delta_rps = if pool.acc_reward_per_weighted_share > 0 && amount_wad > 0 {
         let snapshot = wad_div(user_stake.reward_debt, amount_wad)?;
-        let delta_rps = pool.acc_reward_per_weighted_share.saturating_sub(snapshot);
+        pool.acc_reward_per_weighted_share.saturating_sub(snapshot)
+    } else {
+        0u128
+    };
+
+    if user_weighted > 0 && delta_rps > 0 {
         let full_entitlement = wad_mul(user_weighted, delta_rps)?;
         // Subtract already-claimed amount (frequency-independent)
         let pending = full_entitlement.saturating_sub(user_stake.claimed_rewards_wad);
@@ -91,6 +97,28 @@ pub fn execute_unstake<'a>(
                     pool.last_synced_lamports = pool.last_synced_lamports.saturating_sub(reward_transfer_amount);
                 }
             }
+        }
+    }
+
+    // Redistribute forfeited immature SOL.
+    // When a not-fully-mature staker unstakes, the gap between their max-weight
+    // allocation (amount * delta_rps) and their time-weighted allocation
+    // (user_weighted * delta_rps) is SOL that stays in the pool but was already
+    // counted in last_synced_lamports.  By reducing last_synced_lamports the
+    // next sync_rewards will detect this SOL as new rewards and distribute it
+    // to remaining stakers.
+    if delta_rps > 0 {
+        let max_entitlement_wad = wad_mul(amount_wad, delta_rps)?;
+        let weighted_entitlement_wad = if user_weighted > 0 {
+            wad_mul(user_weighted, delta_rps)?
+        } else {
+            0u128
+        };
+        let forfeited_wad = max_entitlement_wad.saturating_sub(weighted_entitlement_wad);
+        let forfeited_lamports = (forfeited_wad / WAD) as u64;
+        if forfeited_lamports > 0 {
+            pool.last_synced_lamports = pool.last_synced_lamports.saturating_sub(forfeited_lamports);
+            msg!("Redistributing {} lamports of forfeited immature rewards", forfeited_lamports);
         }
     }
 
