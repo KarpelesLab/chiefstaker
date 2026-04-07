@@ -29,9 +29,9 @@ use spl_token_metadata_interface::state::TokenMetadata;
 use crate::{
     error::StakingError,
     state::{
-        is_valid_token_program, StakingPool, METAPLEX_PROGRAM_ID, PFEE_PROGRAM_ID,
-        PFEE_SHARING_CONFIG_DISC, POOL_SEED, PUMP_AMM_POOL_DISC, PUMP_AMM_PROGRAM_ID,
-        PUMP_PROGRAM_ID, TOKEN_VAULT_SEED,
+        is_valid_token_program, StakingPool, METAPLEX_PROGRAM_ID, METEORA_DBC_CREATOR_DISC,
+        METEORA_DBC_CREATOR_PROGRAM_ID, PFEE_PROGRAM_ID, PFEE_SHARING_CONFIG_DISC, POOL_SEED,
+        PUMP_AMM_POOL_DISC, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, TOKEN_VAULT_SEED,
     },
 };
 
@@ -139,14 +139,16 @@ pub fn process_initialize_pool(
         }
     }
 
-    // 3–6. Check remaining accounts for authority proof.
+    // 3–7. Check remaining accounts for authority proof.
     // Collect all valid authorities, then apply priority:
-    //   pfee SharingConfig admin > PumpSwap coin_creator > bonding curve creator > Metaplex update_authority
+    //   pfee SharingConfig admin > PumpSwap coin_creator > bonding curve creator
+    //     > Meteora DBC creator > Metaplex update_authority
     if !authority_verified {
         let mut metaplex_update_auth: Option<Pubkey> = None;
         let mut pfee_admin: Option<Pubkey> = None;
         let mut pump_amm_coin_creator: Option<Pubkey> = None;
         let mut pump_bonding_creator: Option<Pubkey> = None;
+        let mut meteora_dbc_creator: Option<Pubkey> = None;
 
         while let Ok(proof_info) = next_account_info(account_info_iter) {
             // 3. Metaplex metadata: owner=metaqbxx, PDA=["metadata", program, mint]
@@ -208,12 +210,26 @@ pub fn process_initialize_pool(
                     }
                 }
             }
+
+            // 7. Meteora DBC creator: owner=GL6k, verify discriminator + mint
+            if *proof_info.owner == METEORA_DBC_CREATOR_PROGRAM_ID
+                && meteora_dbc_creator.is_none()
+            {
+                let data = proof_info.try_borrow_data()?;
+                if data.len() >= 72
+                    && data[..8] == METEORA_DBC_CREATOR_DISC
+                    && Pubkey::try_from(&data[40..72]).unwrap() == *mint_info.key
+                {
+                    meteora_dbc_creator = Some(Pubkey::try_from(&data[8..40]).unwrap());
+                }
+            }
         }
 
-        // Apply priority: pfee admin > PumpSwap coin_creator > bonding curve creator
+        // Apply priority: pfee admin > PumpSwap coin_creator > bonding curve creator > Meteora DBC creator
         let canonical = pfee_admin
             .or(pump_amm_coin_creator)
-            .or(pump_bonding_creator);
+            .or(pump_bonding_creator)
+            .or(meteora_dbc_creator);
 
         if let Some(auth) = canonical {
             if auth == *authority_info.key {

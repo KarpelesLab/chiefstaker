@@ -63,6 +63,17 @@ pub const PUMP_AMM_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
 /// Anchor discriminator for PumpSwap Pool account
 pub const PUMP_AMM_POOL_DISC: [u8; 8] = [241, 154, 109, 4, 17, 177, 109, 188];
 
+/// Meteora DBC token creator registry (GL6kwZxTaXUXMGAvmmNZSXxANnwtPmKCHprHBM82zYXp)
+pub const METEORA_DBC_CREATOR_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
+    0xe3, 0xc3, 0xd9, 0x72, 0xc3, 0x54, 0x14, 0xdc,
+    0xd9, 0xf5, 0xc3, 0x2d, 0x30, 0x2d, 0x45, 0x8b,
+    0x1e, 0x4b, 0xe9, 0xcd, 0x78, 0x50, 0xd4, 0xb6,
+    0x9f, 0x16, 0x7f, 0xfc, 0x02, 0x73, 0x11, 0xaf,
+]);
+
+/// Discriminator for Meteora DBC creator account
+pub const METEORA_DBC_CREATOR_DISC: [u8; 8] = [36, 36, 123, 35, 158, 89, 75, 41];
+
 /// Account discriminators
 pub const POOL_DISCRIMINATOR: [u8; 8] = [0xc7, 0x5f, 0x7e, 0x2d, 0x3b, 0x1a, 0x9c, 0x4e];
 pub const USER_STAKE_DISCRIMINATOR: [u8; 8] = [0xa3, 0x8b, 0x5d, 0x2f, 0x7c, 0x4a, 0x1e, 0x9d];
@@ -693,5 +704,13 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(PUMP_AMM_PROGRAM_ID, expected);
+    }
+
+    #[test]
+    fn test_meteora_dbc_creator_program_id() {
+        let expected: Pubkey = "GL6kwZxTaXUXMGAvmmNZSXxANnwtPmKCHprHBM82zYXp"
+            .parse()
+            .unwrap();
+        assert_eq!(METEORA_DBC_CREATOR_PROGRAM_ID, expected);
     }
 }
