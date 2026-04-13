@@ -100,13 +100,15 @@ pub fn execute_unstake<'a>(
         }
     }
 
-    // Redistribute forfeited immature SOL.
+    // Redistribute forfeited immature SOL for the unstaked portion only.
     // When a not-fully-mature staker unstakes, the gap between their max-weight
-    // allocation (amount * delta_rps) and their time-weighted allocation
-    // (user_weighted * delta_rps) is SOL that stays in the pool but was already
-    // counted in last_synced_lamports.  By reducing last_synced_lamports the
-    // next sync_rewards will detect this SOL as new rewards and distribute it
-    // to remaining stakers.
+    // allocation and their time-weighted allocation is SOL that stays in the pool
+    // but was already counted in last_synced_lamports.  By reducing
+    // last_synced_lamports the next sync_rewards will detect this SOL as new
+    // rewards and distribute it to remaining stakers.
+    //
+    // For partial unstakes we scale the forfeiture to the unstaked fraction so
+    // the remaining position keeps its future maturity benefit.
     if delta_rps > 0 {
         let max_entitlement_wad = wad_mul(amount_wad, delta_rps)?;
         let weighted_entitlement_wad = if user_weighted > 0 {
@@ -114,7 +116,17 @@ pub fn execute_unstake<'a>(
         } else {
             0u128
         };
-        let forfeited_wad = max_entitlement_wad.saturating_sub(weighted_entitlement_wad);
+        let forfeited_full_wad = max_entitlement_wad.saturating_sub(weighted_entitlement_wad);
+        // Scale to the unstaked portion: forfeited * (unstake_amount / total_amount)
+        let forfeited_wad = if (amount as u128) >= (user_stake.amount as u128) {
+            forfeited_full_wad
+        } else {
+            // Use U256 to avoid overflow in the multiplication
+            let wide = U256::from_u128(forfeited_full_wad) * U256::from_u128(amount as u128);
+            (wide / U256::from_u128(user_stake.amount as u128))
+                .to_u128()
+                .ok_or(StakingError::MathOverflow)?
+        };
         let forfeited_lamports = (forfeited_wad / WAD) as u64;
         if forfeited_lamports > 0 {
             pool.last_synced_lamports = pool.last_synced_lamports.saturating_sub(forfeited_lamports);
