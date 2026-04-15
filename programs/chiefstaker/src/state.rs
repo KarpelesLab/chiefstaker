@@ -293,7 +293,8 @@ pub struct UserStake {
 
     /// Cumulative WAD-scaled rewards already paid out for the current position.
     /// Used to make claims frequency-independent: pending = full_entitlement - claimed_rewards_wad.
-    /// Reset to 0 on stake (add-more) and unstake (partial/full) when the position is restructured.
+    /// Preserved on add-stake (pending rewards unchanged). Reset to 0 on unstake
+    /// (partial/full) when the position is restructured and pending is settled.
     /// Defaults to 0 for existing accounts (correct: first claim gets full pending).
     pub claimed_rewards_wad: u128,
 }

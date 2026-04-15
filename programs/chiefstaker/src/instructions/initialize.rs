@@ -142,10 +142,11 @@ pub fn process_initialize_pool(
     // 3–7. Check remaining accounts for authority proof.
     // Collect all valid authorities, then apply priority:
     //   pfee SharingConfig admin > PumpSwap coin_creator > bonding curve creator
-    //     > Meteora DBC creator > Metaplex update_authority
+    //     > Meteora DBC creator > pfee SharingConfig creator > Metaplex update_authority
     if !authority_verified {
         let mut metaplex_update_auth: Option<Pubkey> = None;
         let mut pfee_admin: Option<Pubkey> = None;
+        let mut pfee_creator: Option<Pubkey> = None;
         let mut pump_amm_coin_creator: Option<Pubkey> = None;
         let mut pump_bonding_creator: Option<Pubkey> = None;
         let mut meteora_dbc_creator: Option<Pubkey> = None;
@@ -173,6 +174,8 @@ pub fn process_initialize_pool(
             }
 
             // 4. pfee SharingConfig: owner=pfee, PDA=["sharing-config", mint]
+            //    Reads admin (offset 43) and creator (offset 80, v2+).
+            //    Both are valid regardless of admin_revoked / creator_revoked flags.
             if *proof_info.owner == PFEE_PROGRAM_ID && pfee_admin.is_none() {
                 let (expected_pda, _) = Pubkey::find_program_address(
                     &[b"sharing-config", mint_info.key.as_ref()],
@@ -182,6 +185,13 @@ pub fn process_initialize_pool(
                     let data = proof_info.try_borrow_data()?;
                     if data.len() >= 75 && data[..8] == PFEE_SHARING_CONFIG_DISC {
                         pfee_admin = Some(Pubkey::try_from(&data[43..75]).unwrap());
+                        // v2 SharingConfig: creator at offset 80
+                        if data.len() >= 112 {
+                            let creator = Pubkey::try_from(&data[80..112]).unwrap();
+                            if creator != Pubkey::default() {
+                                pfee_creator = Some(creator);
+                            }
+                        }
                     }
                 }
             }
@@ -234,6 +244,15 @@ pub fn process_initialize_pool(
         if let Some(auth) = canonical {
             if auth == *authority_info.key {
                 authority_verified = true;
+            }
+        }
+
+        // pfee SharingConfig creator (independent — admin and creator are different roles)
+        if !authority_verified {
+            if let Some(auth) = pfee_creator {
+                if auth == *authority_info.key {
+                    authority_verified = true;
+                }
             }
         }
 
