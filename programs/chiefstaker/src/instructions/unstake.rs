@@ -180,25 +180,24 @@ pub fn settle_unstake_accounting<'a>(
             .checked_add(user_stake.reward_debt)
             .ok_or(StakingError::MathOverflow)?;
     } else {
-        // Full unstake: preserve any unpaid rewards in reward_debt so the user
-        // can claim them later via the amount==0 claim path. When amount==0,
-        // reward_debt is reinterpreted as "unclaimed WAD-scaled rewards".
-        user_stake.reward_debt = unpaid_rewards_wad;
+        // Full unstake: the position is fully reset and the account will be closed.
+        // The user's pending rewards were paid above (capped by the pool balance).
+        // Any unpayable remainder should not occur — the pool holds every staker's
+        // unclaimed rewards — but if it does, we redistribute it to the remaining
+        // stakers via last_synced_lamports rather than stranding it on a closed
+        // account or owing it to a user who is gone.
+        let remainder_lamports = (unpaid_rewards_wad / WAD) as u64;
+        if remainder_lamports > 0 {
+            pool.last_synced_lamports = pool.last_synced_lamports.saturating_sub(remainder_lamports);
+        }
+
+        user_stake.reward_debt = 0;
         user_stake.claimed_rewards_wad = 0;
 
-        // Remove old debt from total_reward_debt but do NOT add the residual.
-        // Residual debts are tracked separately in total_residual_unpaid because
-        // the user's amount is 0 (no allocation in total_staked * acc_rps), and
-        // including them in total_reward_debt would break FixTotalRewardDebt.
+        // Remove the user's old debt from the pool aggregate; nothing is owed.
         pool.total_reward_debt = pool
             .total_reward_debt
             .saturating_sub(old_reward_debt);
-
-        let residual_lamports = (unpaid_rewards_wad / WAD) as u64;
-        pool.total_residual_unpaid = pool
-            .total_residual_unpaid
-            .checked_add(residual_lamports)
-            .ok_or(StakingError::MathOverflow)?;
     }
 
     // Increment cumulative rewards counter
@@ -217,7 +216,7 @@ pub fn settle_unstake_accounting<'a>(
 /// the pool member_count if a metadata account is supplied.
 ///
 /// Mirrors `process_close_stake_account`. The caller must ensure the position is
-/// fully unstaked with no residual rewards owed before calling.
+/// fully unstaked before calling.
 pub fn close_user_stake_account<'a>(
     program_id: &Pubkey,
     pool_info: &AccountInfo<'a>,
@@ -290,11 +289,9 @@ pub fn execute_unstake<'a>(
         system_program_info,
     )?;
 
-    // A full unstake fully resets the position. Close the account afterward when
-    // nothing is owed; if residual rewards remain (pool underfunded), keep it open
-    // so the user can claim them, then close.
+    // A full unstake fully resets the position; the account is always closed
+    // afterward (the user's rewards were settled and paid in full above).
     let fully_unstaked = user_stake.amount == 0;
-    let has_residual = user_stake.reward_debt / WAD > 0;
 
     // Save states (before CPI — pool data includes pre-updated last_synced_lamports)
     {
@@ -345,8 +342,8 @@ pub fn execute_unstake<'a>(
 
     msg!("Unstaked {} tokens", amount);
 
-    // Close the account when fully unstaked and nothing is owed.
-    if fully_unstaked && !has_residual {
+    // Full unstake closes the account to reclaim its rent.
+    if fully_unstaked {
         close_user_stake_account(program_id, pool_info, user_stake_info, user_info, metadata_info)?;
     }
 

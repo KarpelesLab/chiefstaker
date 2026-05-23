@@ -14,7 +14,6 @@ use spl_token_2022::extension::StateWithExtensions;
 
 use crate::{
     error::StakingError,
-    math::WAD,
     state::{is_valid_token_program, StakingPool, UserStake, POOL_SEED},
 };
 
@@ -24,8 +23,8 @@ use super::unstake::close_user_stake_account;
 ///
 /// The reward settlement and pool accounting already happened at RequestUnstake;
 /// this instruction only delivers the frozen tokens from the vault to the user
-/// and, when the position is fully unstaked with nothing owed, closes the stake
-/// account to reclaim its rent.
+/// and, when the position is fully unstaked, closes the stake account to reclaim
+/// its rent.
 ///
 /// Accounts (same as Unstake):
 /// 0. `[writable]` Pool account
@@ -135,9 +134,9 @@ pub fn process_complete_unstake(
     user_stake.unstake_request_amount = 0;
     user_stake.unstake_request_time = 0;
 
-    // Close iff fully unstaked and nothing owed; otherwise keep the account so the
-    // remaining position keeps earning / residual rewards stay claimable.
-    let should_close = user_stake.amount == 0 && user_stake.reward_debt / WAD == 0;
+    // A full unstake (no active stake remaining) closes the account; a partial
+    // completion leaves the still-active position open and earning.
+    let should_close = user_stake.amount == 0;
 
     // Persist the cleared request fields before the CPI
     {

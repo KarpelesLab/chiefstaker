@@ -99,6 +99,27 @@ function deriveMetadataPDA(pool: PublicKey): [PublicKey, number] {
   );
 }
 
+// Reward SOL from an operation, excluding any stake-account rent refunded when a
+// full unstake auto-closes the account. That rent is the user's own deposit
+// coming back (paid at stake time), not reward SOL, so it must not be counted in
+// conservation accounting.
+async function rewardExcludingRent(
+  connection: Connection,
+  poolPDA: PublicKey,
+  user: Keypair,
+  op: () => Promise<any>,
+): Promise<bigint> {
+  const [stakePDA] = deriveUserStakePDA(poolPDA, user.publicKey);
+  const infoBefore = await connection.getAccountInfo(stakePDA);
+  const rentRefundable = infoBefore ? BigInt(infoBefore.lamports) : 0n;
+  const before = BigInt(await connection.getBalance(user.publicKey));
+  await op();
+  const after = BigInt(await connection.getBalance(user.publicKey));
+  const infoAfter = await connection.getAccountInfo(stakePDA);
+  const closed = infoBefore !== null && infoAfter === null;
+  return (after - before) - (closed ? rentRefundable : 0n);
+}
+
 async function airdropAndConfirm(connection: Connection, publicKey: PublicKey, lamports: number): Promise<void> {
   const sig = await connection.requestAirdrop(publicKey, lamports);
   await connection.confirmTransaction(sig);
@@ -2389,22 +2410,26 @@ async function runTests() {
     // Claim rewards first
     await ctx.claimRewards(user);
 
-    // Fully unstake
+    // Fully unstake — this auto-closes the stake account
     await ctx.unstake(user, userToken, BigInt(1_000_000_000));
 
-    // Deposit more rewards (user has amount=0, should not benefit)
+    const [userStakePDA] = deriveUserStakePDA(ctx.poolPDA, user.publicKey);
+    if ((await connection.getAccountInfo(userStakePDA)) !== null) {
+      throw new Error('Stake account should be closed after full unstake');
+    }
+
+    // Deposit more rewards — the exited user must not benefit from them
     await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL));
 
-    // Claim again — should succeed silently (amount==0 path returns Ok)
-    // but should give the user 0 SOL from the new deposit
-    const balBefore = BigInt(await ctx.getBalance(user.publicKey));
-    await ctx.claimRewards(user);
-    const balAfter = BigInt(await ctx.getBalance(user.publicKey));
-
-    // User should gain nothing (or lose tx fee)
-    const gained = balAfter - balBefore;
-    if (gained > BigInt(0)) {
-      throw new Error(`User gained ${gained} lamports after full unstake — should be 0`);
+    // Claiming now must fail: there is no stake account left to claim from
+    let claimFailed = false;
+    try {
+      await ctx.claimRewards(user);
+    } catch (e) {
+      claimFailed = true;
+    }
+    if (!claimFailed) {
+      throw new Error('Claim after full unstake should fail (account closed)');
     }
   });
 
@@ -3140,13 +3165,11 @@ async function runTests() {
     let totalDeposited = BigInt(0);
     const rewards: Record<string, bigint> = { alice: BigInt(0), bob: BigInt(0), carol: BigInt(0), dave: BigInt(0) };
 
-    // Helper: measure SOL reward from an operation
+    // Helper: measure SOL reward from an operation. Excludes any stake-account
+    // rent refunded when a full unstake auto-closes the account (that is the
+    // user's own rent returning, not a reward). Payer covers tx fees.
     async function measureReward(name: string, user: Keypair, op: () => Promise<any>): Promise<bigint> {
-      const before = BigInt(await ctx.getBalance(user.publicKey));
-      await op();
-      const after = BigInt(await ctx.getBalance(user.publicKey));
-      // Payer covers tx fee, so balance diff = pure reward
-      const reward = after - before;
+      const reward = await rewardExcludingRent(connection, ctx.poolPDA, user, op);
       if (reward > BigInt(0)) {
         rewards[name] += reward;
       }
@@ -3366,10 +3389,9 @@ async function runTests() {
     let balAfter = BigInt(await ctx.getBalance(staker1.publicKey));
     totalClaimed += (balAfter - bal);
 
-    bal = BigInt(await ctx.getBalance(staker1.publicKey));
-    await ctx.unstake(staker1, token1, BigInt(1_500_000_000));
-    balAfter = BigInt(await ctx.getBalance(staker1.publicKey));
-    totalClaimed += (balAfter - bal); // reward portion from unstake
+    // Full unstake auto-closes the account; exclude refunded rent from rewards
+    totalClaimed += await rewardExcludingRent(connection, ctx.poolPDA, staker1, () =>
+      ctx.unstake(staker1, token1, BigInt(1_500_000_000)));
 
     // Staker2: claim + unstake
     bal = BigInt(await ctx.getBalance(staker2.publicKey));
@@ -3377,10 +3399,9 @@ async function runTests() {
     balAfter = BigInt(await ctx.getBalance(staker2.publicKey));
     totalClaimed += (balAfter - bal);
 
-    bal = BigInt(await ctx.getBalance(staker2.publicKey));
-    await ctx.unstake(staker2, token2, BigInt(1_000_000_000));
-    balAfter = BigInt(await ctx.getBalance(staker2.publicKey));
-    totalClaimed += (balAfter - bal);
+    // Full unstake auto-closes the account; exclude refunded rent from rewards
+    totalClaimed += await rewardExcludingRent(connection, ctx.poolPDA, staker2, () =>
+      ctx.unstake(staker2, token2, BigInt(1_000_000_000)));
 
     // Check pool remaining
     const poolBalance = BigInt(await ctx.getBalance(ctx.poolPDA));
@@ -3556,11 +3577,10 @@ async function runTests() {
       const stakeAmount = i === 0
         ? BigInt(1_500_000_000) // 1B + 500M
         : BigInt((i + 1) * 1_000_000_000);
-      const balBeforeUnstake = BigInt(await ctx.getBalance(stakers[i].publicKey));
-      await ctx.unstake(stakers[i], tokens[i], stakeAmount);
-      const balAfterUnstake = BigInt(await ctx.getBalance(stakers[i].publicKey));
-      // Count only the reward portion of unstake (unstake also claims rewards)
-      totalClaimed += (balAfterUnstake - balBeforeUnstake);
+      // Full unstake auto-closes the account; count only the reward portion
+      // (exclude the refunded stake-account rent).
+      totalClaimed += await rewardExcludingRent(connection, ctx.poolPDA, stakers[i], () =>
+        ctx.unstake(stakers[i], tokens[i], stakeAmount));
     }
 
     const poolBalance = BigInt(await ctx.getBalance(ctx.poolPDA));
