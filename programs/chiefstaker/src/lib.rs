@@ -70,6 +70,8 @@ pub enum StakingInstruction {
     /// 4. `[]` Token mint
     /// 5. `[writable, signer]` User/owner
     /// 6. `[]` Token 2022 program
+    /// 7. `[]` System program (optional, for legacy account reallocation)
+    /// 8. `[writable]` Metadata PDA (optional, to decrement member_count on full-unstake close)
     Unstake {
         /// Amount of tokens to unstake
         amount: u64,
@@ -128,17 +130,22 @@ pub enum StakingInstruction {
         new_authority: Pubkey,
     },
 
-    /// Request unstake - starts cooldown period (tokens remain staked)
+    /// Request unstake - starts cooldown period.
+    /// The requested coins stop earning immediately (removed from pool weight) and
+    /// their already-earned rewards are settled/paid out. Only the token transfer
+    /// is deferred to CompleteUnstake.
     ///
     /// Accounts:
     /// 0. `[writable]` Pool account
     /// 1. `[writable]` User stake account
-    /// 2. `[signer]` User/owner
+    /// 2. `[writable, signer]` User/owner (receives settled reward SOL)
+    /// 3. `[]` System program (optional, for legacy account reallocation)
     RequestUnstake {
         amount: u64,
     },
 
-    /// Complete unstake after cooldown elapsed
+    /// Complete unstake after cooldown elapsed.
+    /// Delivers the frozen tokens and closes the account on a full unstake.
     ///
     /// Accounts (same as Unstake):
     /// 0. `[writable]` Pool account
@@ -148,14 +155,18 @@ pub enum StakingInstruction {
     /// 4. `[]` Token mint
     /// 5. `[writable, signer]` User/owner
     /// 6. `[]` Token 2022 program
+    /// 7. `[]` System program (optional)
+    /// 8. `[writable]` Metadata PDA (optional, to decrement member_count on close)
     CompleteUnstake,
 
-    /// Cancel a pending unstake request
+    /// Cancel a pending unstake request, restoring the frozen coins to the
+    /// active staking position.
     ///
     /// Accounts:
-    /// 0. `[]` Pool account
+    /// 0. `[writable]` Pool account
     /// 1. `[writable]` User stake account
     /// 2. `[signer]` User/owner
+    /// 3. `[]` System program (optional, for legacy account reallocation)
     CancelUnstakeRequest,
 
     /// Close a zero-balance user stake account to reclaim rent

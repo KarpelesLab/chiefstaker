@@ -123,7 +123,8 @@
       "docs": [
         "Unstake tokens from the pool (direct unstake).",
         "Only available when pool has no cooldown configured.",
-        "Claims pending rewards and redistributes stranded rewards."
+        "Claims pending rewards and redistributes stranded rewards.",
+        "A full unstake closes the user stake account."
       ],
       "accounts": [
         {
@@ -159,6 +160,18 @@
         {
           "name": "tokenProgram",
           "docs": ["Token program (SPL Token or Token 2022)"]
+        },
+        {
+          "name": "systemProgram",
+          "optional": true,
+          "address": "11111111111111111111111111111111",
+          "docs": ["System program (optional, for legacy account reallocation)"]
+        },
+        {
+          "name": "metadata",
+          "writable": true,
+          "optional": true,
+          "docs": ["Metadata PDA (optional, to decrement member_count on full-unstake close)"]
         }
       ],
       "args": [
@@ -332,7 +345,10 @@
       "discriminator": [9],
       "docs": [
         "Request unstake - starts cooldown period.",
-        "Tokens remain staked during cooldown. Only one pending request at a time."
+        "The requested coins stop earning rewards immediately (removed from pool",
+        "weight) and their already-earned rewards are settled and paid out now.",
+        "Only the token transfer is deferred to completeUnstake.",
+        "Only one pending request at a time."
       ],
       "accounts": [
         {
@@ -347,8 +363,15 @@
         },
         {
           "name": "owner",
+          "writable": true,
           "signer": true,
-          "docs": ["User / owner"]
+          "docs": ["User / owner (receives settled reward SOL)"]
+        },
+        {
+          "name": "systemProgram",
+          "optional": true,
+          "address": "11111111111111111111111111111111",
+          "docs": ["System program (optional, for legacy account reallocation)"]
         }
       ],
       "args": [
@@ -363,7 +386,8 @@
       "discriminator": [10],
       "docs": [
         "Complete unstake after cooldown has elapsed.",
-        "Claims pending rewards and redistributes stranded rewards."
+        "Delivers the frozen tokens from the vault to the user (reward settlement",
+        "already happened at requestUnstake). A full unstake closes the account."
       ],
       "accounts": [
         {
@@ -399,6 +423,18 @@
         {
           "name": "tokenProgram",
           "docs": ["Token program (SPL Token or Token 2022)"]
+        },
+        {
+          "name": "systemProgram",
+          "optional": true,
+          "address": "11111111111111111111111111111111",
+          "docs": ["System program (optional)"]
+        },
+        {
+          "name": "metadata",
+          "writable": true,
+          "optional": true,
+          "docs": ["Metadata PDA (optional, to decrement member_count on close)"]
         }
       ],
       "args": []
@@ -407,12 +443,14 @@
       "name": "cancelUnstakeRequest",
       "discriminator": [11],
       "docs": [
-        "Cancel a pending unstake request.",
-        "Tokens remain staked."
+        "Cancel a pending unstake request, restoring the frozen coins to the",
+        "active staking position (re-grants weight; re-added tokens get a fresh",
+        "reward snapshot so they earn no cooldown-period rewards)."
       ],
       "accounts": [
         {
           "name": "pool",
+          "writable": true,
           "docs": ["Pool account"]
         },
         {
@@ -424,6 +462,12 @@
           "name": "owner",
           "signer": true,
           "docs": ["User / owner"]
+        },
+        {
+          "name": "systemProgram",
+          "optional": true,
+          "address": "11111111111111111111111111111111",
+          "docs": ["System program (optional, for legacy account reallocation)"]
         }
       ],
       "args": []
@@ -835,7 +879,7 @@
       "docs": [
         "User stake account.",
         "PDA seeds: [\"stake\", pool, owner].",
-        "Size: 177 bytes (legacy accounts at 153 or 161 bytes are lazily reallocated)."
+        "Size: 178 bytes (legacy accounts at 153, 161, or 177 bytes are lazily reallocated)."
       ],
       "type": {
         "kind": "struct",
@@ -911,6 +955,11 @@
             "name": "claimedRewardsWad",
             "type": "u128",
             "docs": ["Cumulative WAD-scaled rewards already paid for the current position. Used for frequency-independent claims: pending = full_entitlement - claimedRewardsWad. Reset to 0 on stake/unstake. Defaults to 0 for legacy accounts."]
+          },
+          {
+            "name": "unstakeRequestSettled",
+            "type": "u8",
+            "docs": ["1 when the pending unstake request was created under the settle-at-request flow (frozen coins already removed from the pool). 0 = no request, or a legacy in-flight request from before this upgrade. Cancel/Complete branch on this to avoid double-restoring or double-removing legacy requests. Defaults to 0 for legacy accounts."]
           }
         ]
       }
@@ -1169,6 +1218,11 @@
       "code": 6034,
       "name": "RewardDebtExceedsBound",
       "msg": "New total_reward_debt exceeds maximum accumulated rewards"
+    },
+    {
+      "code": 6035,
+      "name": "ResidualRewardsPending",
+      "msg": "Claim residual rewards before cancelling a full unstake request"
     }
   ]
 }

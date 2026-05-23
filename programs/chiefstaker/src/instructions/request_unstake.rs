@@ -12,15 +12,26 @@ use solana_program::{
 
 use crate::{
     error::StakingError,
+    events::{emit_reward_payout, RewardPayoutType},
     state::{StakingPool, UserStake},
 };
 
-/// Request unstake - starts cooldown period. Tokens remain staked and earn rewards.
+use super::unstake::settle_unstake_accounting;
+
+/// Request unstake - starts the cooldown period.
+///
+/// The requested coins stop earning rewards immediately: their stake and weight
+/// are removed from the pool (so they no longer share in new rewards), and the
+/// rewards they have already earned are settled and paid out now. Only the token
+/// transfer is deferred to CompleteUnstake — the tokens stay in the vault until
+/// the cooldown elapses. A pending request can be reversed with CancelUnstake,
+/// which restores the frozen coins to the active position.
 ///
 /// Accounts:
 /// 0. `[writable]` Pool account
 /// 1. `[writable]` User stake account
-/// 2. `[signer]` User/owner
+/// 2. `[writable, signer]` User/owner (receives settled reward SOL)
+/// 3. `[]` System program (optional, for legacy account reallocation)
 pub fn process_request_unstake(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -45,7 +56,7 @@ pub fn process_request_unstake(
     if pool_info.owner != program_id {
         return Err(StakingError::InvalidAccountOwner.into());
     }
-    let pool = StakingPool::try_from_slice(&pool_info.try_borrow_data()?)?;
+    let mut pool = StakingPool::try_from_slice(&pool_info.try_borrow_data()?)?;
     if !pool.is_initialized() {
         return Err(StakingError::NotInitialized.into());
     }
@@ -120,13 +131,46 @@ pub fn process_request_unstake(
         }
     }
 
-    // Set unstake request fields
+    // Settle and remove the requested coins from the pool's reward accounting so
+    // they stop earning during the cooldown. This pays out their already-earned
+    // rewards and reduces user_stake.amount to the still-active remainder; the
+    // requested tokens remain in the vault until CompleteUnstake.
+    let reward_transfer_amount = settle_unstake_accounting(
+        &mut pool,
+        &mut user_stake,
+        pool_info,
+        user_stake_info,
+        user_info,
+        amount,
+        current_time,
+        system_program_info,
+    )?;
+
+    // Record the pending request (the frozen amount awaiting withdrawal).
+    // Mark it as settled-at-request so Cancel/Complete know the coins were already
+    // removed from the pool here (distinguishes new requests from legacy in-flight
+    // requests created before this upgrade).
     user_stake.unstake_request_amount = amount;
     user_stake.unstake_request_time = current_time;
+    user_stake.unstake_request_settled = 1;
 
-    // Save user stake
-    let mut stake_data = user_stake_info.try_borrow_mut_data()?;
-    user_stake.serialize(&mut &mut stake_data[..])?;
+    // Save pool and user stake
+    {
+        let mut pool_data = pool_info.try_borrow_mut_data()?;
+        pool.serialize(&mut &mut pool_data[..])?;
+    }
+    {
+        let mut stake_data = user_stake_info.try_borrow_mut_data()?;
+        user_stake.serialize(&mut &mut stake_data[..])?;
+    }
+
+    // Pay out settled rewards (no token CPI here, so SOL can move directly)
+    if reward_transfer_amount > 0 {
+        **pool_info.try_borrow_mut_lamports()? -= reward_transfer_amount;
+        **user_info.try_borrow_mut_lamports()? += reward_transfer_amount;
+        msg!("Claimed {} lamports in rewards", reward_transfer_amount);
+        emit_reward_payout(pool_info.key, user_info.key, reward_transfer_amount, RewardPayoutType::Unstake);
+    }
 
     msg!(
         "Unstake request created for {} tokens, cooldown {} seconds",

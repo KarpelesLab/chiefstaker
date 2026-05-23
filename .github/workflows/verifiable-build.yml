@@ -5,6 +5,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel an in-progress run when a newer one starts for the same ref+event,
+# so pushes don't pile up stale runs competing for runners.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 env:
   SOLANA_VERSION: v2.0.25
 
@@ -22,8 +28,14 @@ jobs:
       - name: Generate keypair
         run: solana-keygen new --no-bip39-passphrase
 
+      - name: Install protobuf compiler (solana-program-test build dep)
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Build program
         run: cargo build-sbf --workspace
+
+      - name: Run Rust tests (unit + legacy-migration integration)
+        run: cargo test -p chiefstaker
 
       - name: Start test validator with upgradeable program
         run: |

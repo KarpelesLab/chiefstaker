@@ -108,6 +108,9 @@ pub enum StakingError {
 
     #[error("New total_reward_debt exceeds maximum accumulated rewards")]
     RewardDebtExceedsBound,
+
+    #[error("Claim residual rewards before cancelling a full unstake request")]
+    ResidualRewardsPending,
 }
 
 impl From<StakingError> for ProgramError {
