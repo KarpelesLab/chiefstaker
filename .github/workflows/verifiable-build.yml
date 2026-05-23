@@ -25,6 +25,9 @@ jobs:
       - name: Build program
         run: cargo build-sbf --workspace
 
+      - name: Run Rust tests (unit + legacy-migration integration)
+        run: cargo test -p chiefstaker
+
       - name: Start test validator with upgradeable program
         run: |
           solana config set --url http://localhost:8899 --keypair ~/.config/solana/id.json
