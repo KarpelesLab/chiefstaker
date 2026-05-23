@@ -6,7 +6,7 @@ use solana_program::{
     clock::Clock,
     entrypoint::ProgramResult,
     msg,
-    program::invoke_signed,
+    program::{invoke, invoke_signed},
     pubkey::Pubkey,
     rent::Rent,
     system_instruction,
@@ -288,30 +288,34 @@ pub fn process_initialize_pool(
         return Err(StakingError::InvalidPDA.into());
     }
 
+    // Reject re-initialization. The pool/vault PDAs are deterministic and could
+    // have been pre-funded with lamports by a third party (a griefing vector that
+    // would make plain `create_account` fail), but a third party cannot allocate
+    // or assign them. So an empty (zero-length) data buffer means "not yet
+    // initialized" regardless of any stray lamports; non-empty means already done.
+    if !pool_info.data_is_empty() {
+        return Err(StakingError::AlreadyInitialized.into());
+    }
+    if !token_vault_info.data_is_empty() {
+        return Err(StakingError::AlreadyInitialized.into());
+    }
+
     let rent = Rent::from_account_info(rent_sysvar_info)?;
     let clock = Clock::get()?;
 
-    // Create pool account
+    // Create pool account (tolerates a pre-funded PDA)
     let pool_seeds = &[POOL_SEED, mint_info.key.as_ref(), &[pool_bump]];
-    let pool_rent = rent.minimum_balance(StakingPool::LEN);
-
-    invoke_signed(
-        &system_instruction::create_account(
-            authority_info.key,
-            pool_info.key,
-            pool_rent,
-            StakingPool::LEN as u64,
-            program_id,
-        ),
-        &[
-            authority_info.clone(),
-            pool_info.clone(),
-            system_program_info.clone(),
-        ],
-        &[pool_seeds],
+    create_pda_account(
+        authority_info,
+        pool_info,
+        system_program_info,
+        program_id,
+        StakingPool::LEN,
+        &rent,
+        pool_seeds,
     )?;
 
-    // Create token vault account
+    // Create token vault account (tolerates a pre-funded PDA)
     let vault_seeds = &[TOKEN_VAULT_SEED, pool_info.key.as_ref(), &[vault_bump]];
 
     // Get the size needed for a token account
@@ -322,22 +326,15 @@ pub fn process_initialize_pool(
     } else {
         spl_token_2022::state::Account::LEN
     };
-    let vault_rent = rent.minimum_balance(vault_size);
 
-    invoke_signed(
-        &system_instruction::create_account(
-            authority_info.key,
-            token_vault_info.key,
-            vault_rent,
-            vault_size as u64,
-            token_program_info.key,
-        ),
-        &[
-            authority_info.clone(),
-            token_vault_info.clone(),
-            system_program_info.clone(),
-        ],
-        &[vault_seeds],
+    create_pda_account(
+        authority_info,
+        token_vault_info,
+        system_program_info,
+        token_program_info.key,
+        vault_size,
+        &rent,
+        vault_seeds,
     )?;
 
     // Initialize token vault as token account
@@ -371,4 +368,59 @@ pub fn process_initialize_pool(
     msg!("Tau: {} seconds", tau_seconds);
 
     Ok(())
+}
+
+/// Create a program-derived account at `target`, tolerating the case where the
+/// target PDA has already been funded with lamports by a third party.
+///
+/// `system_instruction::create_account` requires the destination to hold zero
+/// lamports, so anyone can permanently block creation of a deterministic PDA by
+/// sending it 1 lamport first. To avoid that DoS we, when the account is already
+/// funded, top it up to rent-exemption and then `allocate` + `assign` it under
+/// its own seeds — operations that require the PDA's signature and therefore
+/// cannot be performed by a griefer who only transferred lamports.
+fn create_pda_account<'a>(
+    payer: &AccountInfo<'a>,
+    target: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
+    owner: &Pubkey,
+    space: usize,
+    rent: &Rent,
+    seeds: &[&[u8]],
+) -> ProgramResult {
+    let required = rent.minimum_balance(space);
+
+    if target.lamports() == 0 {
+        // Fast path: empty + unfunded, a single create_account does it all.
+        return invoke_signed(
+            &system_instruction::create_account(
+                payer.key,
+                target.key,
+                required,
+                space as u64,
+                owner,
+            ),
+            &[payer.clone(), target.clone(), system_program.clone()],
+            &[seeds],
+        );
+    }
+
+    // Pre-funded path: fund to rent-exemption, then allocate + assign under seeds.
+    let current = target.lamports();
+    if current < required {
+        invoke(
+            &system_instruction::transfer(payer.key, target.key, required - current),
+            &[payer.clone(), target.clone(), system_program.clone()],
+        )?;
+    }
+    invoke_signed(
+        &system_instruction::allocate(target.key, space as u64),
+        &[target.clone(), system_program.clone()],
+        &[seeds],
+    )?;
+    invoke_signed(
+        &system_instruction::assign(target.key, owner),
+        &[target.clone(), system_program.clone()],
+        &[seeds],
+    )
 }

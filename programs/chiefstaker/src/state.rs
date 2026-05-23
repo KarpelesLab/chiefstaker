@@ -150,6 +150,14 @@ pub struct StakingPool {
     /// amount=0 (no allocation in `total_staked * acc_rps`), so including their
     /// debt in `total_reward_debt` would break the FixTotalRewardDebt formula.
     /// Starts at 0 for existing pools (binary-compatible with old `_reserved3`).
+    ///
+    /// LEGACY-ONLY as of the "always close on full unstake" change: full unstakes
+    /// now pay out in full and redistribute any unpayable remainder, so the
+    /// current code never *increments* this field. It is only ever decremented,
+    /// servicing residual balances created by pre-upgrade accounts via the
+    /// `amount == 0` claim path. The field is retained for binary layout
+    /// compatibility and to drain those legacy balances; off-chain tooling should
+    /// not treat it as a live obligation counter for new pools.
     pub total_residual_unpaid: u64,
 }
 
@@ -528,7 +536,12 @@ pub struct PoolMetadata {
     /// UTF-8 URL, zero-padded
     pub url: [u8; 128],
 
-    /// Active staker count
+    /// Active staker count (best-effort).
+    /// Incremented on a new stake and decremented on close ONLY when the optional
+    /// metadata account is supplied to those instructions. Clients that care about
+    /// an accurate count must pass this metadata PDA on stake AND on every close
+    /// path (Unstake/CompleteUnstake full unstake, CloseStakeAccount); otherwise
+    /// the counter can drift upward. It is display-only and never affects funds.
     pub member_count: u64,
 
     /// PDA bump seed
