@@ -22,6 +22,9 @@ jobs:
       - name: Generate keypair
         run: solana-keygen new --no-bip39-passphrase
 
+      - name: Install protobuf compiler (solana-program-test build dep)
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Build program
         run: cargo build-sbf --workspace
 
