@@ -55,6 +55,7 @@ pub enum StakingInstruction {
     /// 5. `[writable, signer]` User/owner
     /// 6. `[]` System program
     /// 7. `[]` Token 2022 program
+    /// 8. `[writable]` Metadata PDA (required; member_count, uninitialized tolerated)
     Stake {
         /// Amount of tokens to stake
         amount: u64,
@@ -70,8 +71,8 @@ pub enum StakingInstruction {
     /// 4. `[]` Token mint
     /// 5. `[writable, signer]` User/owner
     /// 6. `[]` Token 2022 program
-    /// 7. `[]` System program (optional, for legacy account reallocation)
-    /// 8. `[writable]` Metadata PDA (optional, to decrement member_count on full-unstake close)
+    /// 7. `[]` System program (required; for legacy account reallocation)
+    /// 8. `[writable]` Metadata PDA (required; member_count, uninitialized tolerated)
     Unstake {
         /// Amount of tokens to unstake
         amount: u64,
@@ -155,8 +156,8 @@ pub enum StakingInstruction {
     /// 4. `[]` Token mint
     /// 5. `[writable, signer]` User/owner
     /// 6. `[]` Token 2022 program
-    /// 7. `[]` System program (optional)
-    /// 8. `[writable]` Metadata PDA (optional, to decrement member_count on close)
+    /// 7. `[]` System program (required)
+    /// 8. `[writable]` Metadata PDA (required; member_count, uninitialized tolerated)
     CompleteUnstake,
 
     /// Cancel a pending unstake request, restoring the frozen coins to the
@@ -175,6 +176,7 @@ pub enum StakingInstruction {
     /// 0. `[]` Pool account
     /// 1. `[writable]` User stake account
     /// 2. `[writable, signer]` User/owner
+    /// 3. `[writable]` Metadata PDA (required; member_count, uninitialized tolerated)
     CloseStakeAccount,
 
     /// DEPRECATED: Slot 13 reserved for ABI compatibility (was FixTotalRewardDebt).
@@ -235,6 +237,7 @@ pub enum StakingInstruction {
     /// 6. `[writable]` Beneficiary (receives position)
     /// 7. `[]` System program
     /// 8. `[]` Token 2022 program
+    /// 9. `[writable]` Metadata PDA (required; member_count, uninitialized tolerated)
     StakeOnBehalf {
         amount: u64,
     },

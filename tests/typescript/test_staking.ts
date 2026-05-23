@@ -162,6 +162,7 @@ function createStakeInstruction(
   mint: PublicKey,
   user: PublicKey,
   amount: bigint,
+  metadata: PublicKey,
   tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID,
 ): TransactionInstruction {
   const data = Buffer.alloc(1 + 8);
@@ -178,6 +179,8 @@ function createStakeInstruction(
       { pubkey: user, isSigner: true, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+      // Metadata PDA is required (uninitialized account tolerated for pools without metadata)
+      { pubkey: metadata, isSigner: false, isWritable: true },
     ],
     programId: PROGRAM_ID,
     data,
@@ -715,6 +718,7 @@ class TestContext {
 
   async stake(user: Keypair, userToken: PublicKey, amount: bigint): Promise<string> {
     const [userStakePDA] = deriveUserStakePDA(this.poolPDA, user.publicKey);
+    const [metadataPDA] = deriveMetadataPDA(this.poolPDA);
 
     const ix = createStakeInstruction(
       this.poolPDA,
@@ -724,6 +728,7 @@ class TestContext {
       this.mint,
       user.publicKey,
       amount,
+      metadataPDA,
       this.tokenProgramId,
     );
 
@@ -733,6 +738,7 @@ class TestContext {
 
   async stakeOnBehalf(staker: Keypair, stakerToken: PublicKey, beneficiary: PublicKey, amount: bigint): Promise<string> {
     const [beneficiaryStakePDA] = deriveUserStakePDA(this.poolPDA, beneficiary);
+    const [metadataPDA] = deriveMetadataPDA(this.poolPDA);
 
     const ix = createStakeOnBehalfInstruction(
       this.poolPDA,
@@ -743,7 +749,7 @@ class TestContext {
       staker.publicKey,
       beneficiary,
       amount,
-      undefined,
+      metadataPDA,
       this.tokenProgramId,
     );
 
@@ -764,7 +770,7 @@ class TestContext {
       user.publicKey,
       amount,
       this.tokenProgramId,
-      withMetadata ? metadataPDA : undefined,
+      metadataPDA, // metadata PDA is now required on this instruction
     );
 
     const tx = new Transaction().add(ix);
@@ -890,7 +896,7 @@ class TestContext {
       this.mint,
       user.publicKey,
       this.tokenProgramId,
-      withMetadata ? metadataPDA : undefined,
+      metadataPDA, // metadata PDA is now required on this instruction
     );
 
     const tx = new Transaction().add(ix);
@@ -1029,7 +1035,7 @@ class TestContext {
       this.poolPDA,
       userStakePDA,
       user.publicKey,
-      withMetadata ? metadataPDA : undefined,
+      metadataPDA, // metadata PDA is now required on this instruction
     );
 
     const tx = new Transaction().add(ix);

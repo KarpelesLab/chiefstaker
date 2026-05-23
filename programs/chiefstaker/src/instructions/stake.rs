@@ -17,7 +17,7 @@ use spl_token_2022::extension::StateWithExtensions;
 use crate::{
     error::StakingError,
     math::{exp_time_ratio, wad_mul, MAX_EXP_INPUT, U256, WAD},
-    state::{is_valid_token_program, PoolMetadata, StakingPool, UserStake, STAKE_SEED},
+    state::{is_valid_token_program, update_pool_member_count, StakingPool, UserStake, STAKE_SEED},
 };
 
 /// Stake tokens into the pool
@@ -50,6 +50,9 @@ pub fn process_stake(
     let user_info = next_account_info(account_info_iter)?;
     let system_program_info = next_account_info(account_info_iter)?;
     let token_program_info = next_account_info(account_info_iter)?;
+    // Metadata PDA (required). Carries member_count; an uninitialized account is
+    // tolerated for pools that never created metadata (see update_pool_member_count).
+    let metadata_info = next_account_info(account_info_iter)?;
 
     // Validate token program (SPL Token or Token 2022)
     if !is_valid_token_program(token_program_info.key) {
@@ -304,23 +307,9 @@ pub fn process_stake(
         ],
     )?;
 
-    // Optional metadata account: increment member_count on new stake
+    // Increment member_count on a new stake (metadata PDA is a required account).
     if is_new_stake {
-        if let Some(metadata_info) = account_info_iter.next() {
-            if metadata_info.owner == program_id && !metadata_info.data_is_empty() {
-                let (expected_metadata, _) =
-                    PoolMetadata::derive_pda(pool_info.key, program_id);
-                if *metadata_info.key == expected_metadata {
-                    let mut metadata =
-                        PoolMetadata::try_from_slice(&metadata_info.try_borrow_data()?)?;
-                    if metadata.is_initialized() && metadata.pool == *pool_info.key {
-                        metadata.member_count = metadata.member_count.saturating_add(1);
-                        let mut metadata_data = metadata_info.try_borrow_mut_data()?;
-                        metadata.serialize(&mut &mut metadata_data[..])?;
-                    }
-                }
-            }
-        }
+        update_pool_member_count(program_id, pool_info, metadata_info, 1)?;
     }
 
     msg!("Staked {} tokens", amount);

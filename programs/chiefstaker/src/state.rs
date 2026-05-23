@@ -536,12 +536,12 @@ pub struct PoolMetadata {
     /// UTF-8 URL, zero-padded
     pub url: [u8; 128],
 
-    /// Active staker count (best-effort).
-    /// Incremented on a new stake and decremented on close ONLY when the optional
-    /// metadata account is supplied to those instructions. Clients that care about
-    /// an accurate count must pass this metadata PDA on stake AND on every close
-    /// path (Unstake/CompleteUnstake full unstake, CloseStakeAccount); otherwise
-    /// the counter can drift upward. It is display-only and never affects funds.
+    /// Active staker count. The metadata PDA is a REQUIRED account on every
+    /// member-count-changing instruction (Stake, StakeOnBehalf, Unstake,
+    /// CompleteUnstake, CloseStakeAccount), so this stays exact: +1 on a new
+    /// stake, -1 on close. Maintained via `update_pool_member_count`, which
+    /// tolerates an uninitialized metadata account for pools that never created
+    /// metadata. Display-only; never affects funds.
     pub member_count: u64,
 
     /// PDA bump seed
@@ -571,6 +571,48 @@ impl PoolMetadata {
     pub fn is_initialized(&self) -> bool {
         self.discriminator == METADATA_DISCRIMINATOR
     }
+}
+
+/// Apply `delta` (+1 / -1) to a pool's `member_count`.
+///
+/// `metadata_info` must be the canonical metadata PDA for `pool_info`; a
+/// non-canonical account is rejected with `InvalidPDA`. This lets callers
+/// require the metadata account unconditionally on every member-count-changing
+/// instruction (stake / unstake / close) so the counter stays exact. A pool that
+/// never created metadata is supported transparently: the canonical PDA is then
+/// an uninitialized (system-owned, empty) account, which is detected and the
+/// update is skipped.
+pub fn update_pool_member_count<'a>(
+    program_id: &Pubkey,
+    pool_info: &AccountInfo<'a>,
+    metadata_info: &AccountInfo<'a>,
+    delta: i64,
+) -> Result<(), solana_program::program_error::ProgramError> {
+    // The supplied account must be the canonical metadata PDA for this pool.
+    let (expected_metadata, _) = PoolMetadata::derive_pda(pool_info.key, program_id);
+    if *metadata_info.key != expected_metadata {
+        return Err(StakingError::InvalidPDA.into());
+    }
+
+    // Metadata-less pool: the canonical PDA is uninitialized — nothing to update.
+    if metadata_info.owner != program_id || metadata_info.data_is_empty() {
+        return Ok(());
+    }
+
+    let mut metadata = PoolMetadata::try_from_slice(&metadata_info.try_borrow_data()?)?;
+    if !metadata.is_initialized() || metadata.pool != *pool_info.key {
+        return Ok(());
+    }
+
+    metadata.member_count = if delta >= 0 {
+        metadata.member_count.saturating_add(delta as u64)
+    } else {
+        metadata.member_count.saturating_sub(delta.unsigned_abs())
+    };
+
+    let mut data = metadata_info.try_borrow_mut_data()?;
+    metadata.serialize(&mut &mut data[..])?;
+    Ok(())
 }
 
 #[cfg(test)]

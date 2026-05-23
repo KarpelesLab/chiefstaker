@@ -138,9 +138,10 @@ pub fn process_complete_unstake(
 
     let withdraw_amount = user_stake.unstake_request_amount;
 
-    // Optional trailing accounts: system program (legacy realloc) then metadata
-    let system_program_info = account_info_iter.next();
-    let metadata_info = account_info_iter.next();
+    // System program (for legacy account realloc) and the metadata PDA (for the
+    // member_count decrement on close) are both required accounts.
+    let system_program_info = next_account_info(account_info_iter)?;
+    let metadata_info = next_account_info(account_info_iter)?;
 
     if user_stake.unstake_request_settled == 0 {
         // ── Legacy in-flight request ──────────────────────────────────────
@@ -161,8 +162,8 @@ pub fn process_complete_unstake(
             user_info,
             withdraw_amount,
             current_time,
-            system_program_info,
-            metadata_info,
+            Some(system_program_info),
+            Some(metadata_info),
         );
     }
 
@@ -215,7 +216,7 @@ pub fn process_complete_unstake(
 
     // A full unstake fully resets the position; close the account to reclaim rent.
     if should_close {
-        close_user_stake_account(program_id, pool_info, user_stake_info, user_info, metadata_info)?;
+        close_user_stake_account(program_id, pool_info, user_stake_info, user_info, Some(metadata_info))?;
     }
 
     Ok(())

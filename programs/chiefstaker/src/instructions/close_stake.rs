@@ -1,6 +1,6 @@
 //! Close an empty user stake account to reclaim rent
 
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::BorshDeserialize;
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
     entrypoint::ProgramResult,
@@ -11,7 +11,7 @@ use solana_program::{
 use crate::{
     error::StakingError,
     math::WAD,
-    state::{PoolMetadata, StakingPool, UserStake},
+    state::{update_pool_member_count, StakingPool, UserStake},
 };
 
 /// Close a zero-balance user stake account, returning rent to the user.
@@ -29,6 +29,9 @@ pub fn process_close_stake_account(
     let pool_info = next_account_info(account_info_iter)?;
     let user_stake_info = next_account_info(account_info_iter)?;
     let user_info = next_account_info(account_info_iter)?;
+    // Metadata PDA (required). Tolerates an uninitialized account for pools that
+    // never created metadata (see update_pool_member_count).
+    let metadata_info = next_account_info(account_info_iter)?;
 
     // Validate user is signer
     if !user_info.is_signer {
@@ -95,22 +98,8 @@ pub fn process_close_stake_account(
     let mut stake_data = user_stake_info.try_borrow_mut_data()?;
     stake_data.fill(0);
 
-    // Optional metadata account: decrement member_count on close
-    if let Some(metadata_info) = account_info_iter.next() {
-        if metadata_info.owner == program_id && !metadata_info.data_is_empty() {
-            let (expected_metadata, _) =
-                PoolMetadata::derive_pda(pool_info.key, program_id);
-            if *metadata_info.key == expected_metadata {
-                let mut metadata =
-                    PoolMetadata::try_from_slice(&metadata_info.try_borrow_data()?)?;
-                if metadata.is_initialized() && metadata.pool == *pool_info.key {
-                    metadata.member_count = metadata.member_count.saturating_sub(1);
-                    let mut metadata_data = metadata_info.try_borrow_mut_data()?;
-                    metadata.serialize(&mut &mut metadata_data[..])?;
-                }
-            }
-        }
-    }
+    // Decrement member_count on close (metadata PDA is a required account).
+    update_pool_member_count(program_id, pool_info, metadata_info, -1)?;
 
     msg!("Closed user stake account, returned {} lamports", stake_lamports);
 
