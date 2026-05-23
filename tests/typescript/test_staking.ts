@@ -3831,8 +3831,9 @@ async function runTests() {
     if (meta2.memberCount !== 1n) throw new Error(`Expected 1 after re-set, got ${meta2.memberCount}`);
   });
 
-  // Test: Stake without metadata account still works (backwards compatible)
-  await test(`[${tokenProgramLabel}] Stake without metadata account is backwards compatible`, async () => {
+  // Test: Stake on a metadata pool increments member_count (metadata PDA is now
+  // a required account on Stake, so the count is maintained exactly).
+  await test(`[${tokenProgramLabel}] Stake increments member_count on a metadata pool`, async () => {
     const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMintWithMetadata(9, 'BackCompat', 'BCK');
@@ -3844,12 +3845,11 @@ async function runTests() {
     const userToken = await ctx.createUserTokenAccount(user.publicKey);
     await ctx.mintTokens(userToken, BigInt(1_000_000_000));
 
-    // Stake WITHOUT passing metadata account (old-style 8-account call)
+    // ctx.stake always passes the metadata PDA now; a new stake increments the count.
     await ctx.stake(user, userToken, BigInt(1_000_000_000));
 
-    // member_count should remain 0 since we didn't pass metadata
     const meta = await ctx.readMetadata();
-    if (meta.memberCount !== 0n) throw new Error(`Expected 0 (no metadata passed), got ${meta.memberCount}`);
+    if (meta.memberCount !== 1n) throw new Error(`Expected 1 after stake, got ${meta.memberCount}`);
   });
 
   } // end Token 2022-only metadata tests
