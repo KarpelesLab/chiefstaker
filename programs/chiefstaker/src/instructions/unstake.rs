@@ -17,7 +17,7 @@ use crate::{
     error::StakingError,
     events::{emit_reward_payout, RewardPayoutType},
     math::{calculate_user_weighted_stake, wad_div, wad_mul, U256, WAD},
-    state::{is_valid_token_program, PoolMetadata, StakingPool, UserStake, POOL_SEED},
+    state::{is_valid_token_program, update_pool_member_count, StakingPool, UserStake, POOL_SEED},
 };
 
 /// Accounting-only portion of an unstake, shared by direct `Unstake`
@@ -235,20 +235,10 @@ pub fn close_user_stake_account<'a>(
         stake_data.fill(0);
     }
 
-    // Optional metadata account: decrement member_count on close
+    // Decrement member_count on close (metadata PDA is a required account on the
+    // close paths; an uninitialized account is tolerated for metadata-less pools).
     if let Some(metadata_info) = metadata_info {
-        if metadata_info.owner == program_id && !metadata_info.data_is_empty() {
-            let (expected_metadata, _) = PoolMetadata::derive_pda(pool_info.key, program_id);
-            if *metadata_info.key == expected_metadata {
-                let mut metadata =
-                    PoolMetadata::try_from_slice(&metadata_info.try_borrow_data()?)?;
-                if metadata.is_initialized() && metadata.pool == *pool_info.key {
-                    metadata.member_count = metadata.member_count.saturating_sub(1);
-                    let mut metadata_data = metadata_info.try_borrow_mut_data()?;
-                    metadata.serialize(&mut &mut metadata_data[..])?;
-                }
-            }
-        }
+        update_pool_member_count(program_id, pool_info, metadata_info, -1)?;
     }
 
     msg!("Closed user stake account, returned {} lamports", stake_lamports);
@@ -475,9 +465,10 @@ pub fn process_unstake(
         }
     }
 
-    // Optional trailing accounts: system program (legacy realloc) then metadata (close)
-    let system_program_info = account_info_iter.next();
-    let metadata_info = account_info_iter.next();
+    // System program (for legacy account realloc) and the metadata PDA (for the
+    // member_count decrement on a full-unstake close) are both required accounts.
+    let system_program_info = next_account_info(account_info_iter)?;
+    let metadata_info = next_account_info(account_info_iter)?;
 
     // Execute the shared unstake logic
     execute_unstake(
@@ -492,7 +483,7 @@ pub fn process_unstake(
         user_info,
         amount,
         current_time,
-        system_program_info,
-        metadata_info,
+        Some(system_program_info),
+        Some(metadata_info),
     )
 }

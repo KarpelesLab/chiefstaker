@@ -67,7 +67,7 @@
       "docs": [
         "Stake tokens into the pool. Creates user stake account if needed.",
         "Preserves maturity percentage when adding to existing stake.",
-        "Optional trailing account: PoolMetadata PDA to increment member_count on new stake."
+        "Requires the PoolMetadata PDA (increments member_count on a new stake; an uninitialized account is tolerated for pools without metadata)."
       ],
       "accounts": [
         {
@@ -108,6 +108,11 @@
         {
           "name": "tokenProgram",
           "docs": ["Token program (SPL Token or Token 2022)"]
+        },
+        {
+          "name": "metadata",
+          "writable": true,
+          "docs": ["Metadata PDA (required; member_count is incremented on a new stake; an uninitialized account is tolerated for pools without metadata)"]
         }
       ],
       "args": [
@@ -163,15 +168,13 @@
         },
         {
           "name": "systemProgram",
-          "optional": true,
           "address": "11111111111111111111111111111111",
-          "docs": ["System program (optional, for legacy account reallocation)"]
+          "docs": ["System program (required; for legacy account reallocation)"]
         },
         {
           "name": "metadata",
           "writable": true,
-          "optional": true,
-          "docs": ["Metadata PDA (optional, to decrement member_count on full-unstake close)"]
+          "docs": ["Metadata PDA (required; member_count is decremented on a full-unstake close; an uninitialized account is tolerated for pools without metadata)"]
         }
       ],
       "args": [
@@ -426,15 +429,13 @@
         },
         {
           "name": "systemProgram",
-          "optional": true,
           "address": "11111111111111111111111111111111",
-          "docs": ["System program (optional)"]
+          "docs": ["System program (required)"]
         },
         {
           "name": "metadata",
           "writable": true,
-          "optional": true,
-          "docs": ["Metadata PDA (optional, to decrement member_count on close)"]
+          "docs": ["Metadata PDA (required; member_count is decremented on close; an uninitialized account is tolerated for pools without metadata)"]
         }
       ],
       "args": []
@@ -494,6 +495,11 @@
           "writable": true,
           "signer": true,
           "docs": ["User / owner (receives rent refund)"]
+        },
+        {
+          "name": "metadata",
+          "writable": true,
+          "docs": ["Metadata PDA (required; member_count is decremented on close; an uninitialized account is tolerated for pools without metadata)"]
         }
       ],
       "args": []
@@ -651,7 +657,7 @@
         "Stake tokens on behalf of another user (beneficiary).",
         "Staker provides tokens and pays rent; beneficiary receives the staking position.",
         "Beneficiary does NOT need to sign.",
-        "Optional trailing account: PoolMetadata PDA to increment member_count on new stake."
+        "Requires the PoolMetadata PDA (increments member_count on a new stake; an uninitialized account is tolerated for pools without metadata)."
       ],
       "accounts": [
         {
@@ -697,6 +703,11 @@
         {
           "name": "tokenProgram",
           "docs": ["Token program (SPL Token or Token 2022)"]
+        },
+        {
+          "name": "metadata",
+          "writable": true,
+          "docs": ["Metadata PDA (required; member_count is incremented on a new stake; an uninitialized account is tolerated for pools without metadata)"]
         }
       ],
       "args": [
@@ -1032,7 +1043,7 @@
           {
             "name": "memberCount",
             "type": "u64",
-            "docs": ["Active staker count"]
+            "docs": ["Active staker count. The metadata PDA is a required account on stake/unstake/close, so this stays exact (incremented on a new stake, decremented on close)."]
           },
           {
             "name": "bump",

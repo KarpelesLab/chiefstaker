@@ -11,7 +11,7 @@
 use borsh::BorshDeserialize;
 use chiefstaker::{
     math::{wad_mul, U256, WAD},
-    state::{StakingPool, UserStake, POOL_SEED, STAKE_SEED, TOKEN_VAULT_SEED},
+    state::{StakingPool, UserStake, METADATA_SEED, POOL_SEED, STAKE_SEED, TOKEN_VAULT_SEED},
     StakingInstruction,
 };
 use solana_program::{
@@ -177,6 +177,7 @@ async fn legacy_complete_full_removes_and_closes() {
     let user_token = Keypair::new();
     let (stake_pda, stake_bump) =
         Pubkey::find_program_address(&[STAKE_SEED, pool_pda.as_ref(), user.pubkey().as_ref()], &program_id);
+    let (metadata_pda, _) = Pubkey::find_program_address(&[METADATA_SEED, pool_pda.as_ref()], &program_id);
 
     let staked: u64 = 1_000_000_000;
 
@@ -262,6 +263,8 @@ async fn legacy_complete_full_removes_and_closes() {
             AccountMeta::new(user.pubkey(), true),
             AccountMeta::new_readonly(spl_token_2022::id(), false),
             AccountMeta::new_readonly(system_program::id(), false),
+            // Metadata PDA (required; uninitialized here — this pool has no metadata)
+            AccountMeta::new(metadata_pda, false),
         ],
         data: borsh::to_vec(&StakingInstruction::CompleteUnstake).unwrap(),
     };
