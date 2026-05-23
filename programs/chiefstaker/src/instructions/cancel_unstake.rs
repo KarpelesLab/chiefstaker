@@ -10,15 +10,24 @@ use solana_program::{
 
 use crate::{
     error::StakingError,
+    math::{wad_mul, U256, WAD},
     state::{StakingPool, UserStake},
 };
 
-/// Cancel a pending unstake request
+/// Cancel a pending unstake request, restoring the frozen coins to the active
+/// staking position so they earn rewards again.
+///
+/// RequestUnstake removed the frozen coins from the pool's reward accounting. This
+/// adds them back: total_staked and sum_stake_exp are restored (re-granting the
+/// weight at the original maturity, since exp_start_factor is unchanged), and the
+/// re-added tokens receive a fresh reward snapshot so they do not retroactively
+/// claim rewards distributed during the cooldown (mirrors add-stake).
 ///
 /// Accounts:
-/// 0. `[]` Pool account
+/// 0. `[writable]` Pool account
 /// 1. `[writable]` User stake account
 /// 2. `[signer]` User/owner
+/// 3. `[]` System program (optional, for legacy account reallocation)
 pub fn process_cancel_unstake_request(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -38,7 +47,7 @@ pub fn process_cancel_unstake_request(
     if pool_info.owner != program_id {
         return Err(StakingError::InvalidAccountOwner.into());
     }
-    let pool = StakingPool::try_from_slice(&pool_info.try_borrow_data()?)?;
+    let mut pool = StakingPool::try_from_slice(&pool_info.try_borrow_data()?)?;
     if !pool.is_initialized() {
         return Err(StakingError::NotInitialized.into());
     }
@@ -47,6 +56,11 @@ pub fn process_cancel_unstake_request(
     let (expected_pool, _) = StakingPool::derive_pda(&pool.mint, program_id);
     if *pool_info.key != expected_pool {
         return Err(StakingError::InvalidPDA.into());
+    }
+
+    // Check if pool needs rebasing (we are about to grow sum_stake_exp)
+    if pool.get_sum_stake_exp().needs_rebase() {
+        return Err(StakingError::PoolRequiresSync.into());
     }
 
     // Realloc legacy accounts to current size (payer = user)
@@ -78,25 +92,84 @@ pub fn process_cancel_unstake_request(
         return Err(StakingError::InvalidPDA.into());
     }
 
-    // Lazily adjust exp_start_factor if pool has been rebased
-    user_stake.sync_to_pool(&pool)?;
-
     // Check there is a pending request
     if !user_stake.has_pending_unstake_request() {
         return Err(StakingError::NoPendingUnstakeRequest.into());
     }
 
-    let cancelled_amount = user_stake.unstake_request_amount;
+    // Lazily adjust exp_start_factor if pool has been rebased
+    user_stake.sync_to_pool(&pool)?;
+
+    let frozen = user_stake.unstake_request_amount;
+
+    // Edge case: a full unstake request (amount == 0) that still has unpaid
+    // residual rewards stores those in reward_debt. Reactivating the position
+    // would overwrite that storage with a snapshot, losing the residual. Require
+    // the user to claim it first (ClaimRewards works on the amount==0 path).
+    if user_stake.amount == 0 && user_stake.reward_debt / WAD > 0 {
+        return Err(StakingError::ResidualRewardsPending.into());
+    }
+
+    // Restore the frozen coins to the active position.
+    let frozen_wad = (frozen as u128)
+        .checked_mul(WAD)
+        .ok_or(StakingError::MathOverflow)?;
+
+    // sum_stake_exp += frozen * exp_start_factor (restores weight / maturity)
+    let contribution = wad_mul(frozen_wad, user_stake.exp_start_factor)?;
+    let new_sum = pool
+        .get_sum_stake_exp()
+        .checked_add(U256::from_u128(contribution))
+        .ok_or(StakingError::MathOverflow)?;
+    pool.set_sum_stake_exp(new_sum);
+
+    // total_staked += frozen
+    pool.total_staked = pool
+        .total_staked
+        .checked_add(frozen as u128)
+        .ok_or(StakingError::MathOverflow)?;
+
+    // Fresh reward snapshot for the re-added tokens (no retroactive rewards)
+    let new_token_debt = wad_mul(frozen_wad, pool.acc_reward_per_weighted_share)?;
+
+    if user_stake.amount == 0 {
+        // Was a full request (no residual remains): start clean.
+        user_stake.reward_debt = new_token_debt;
+        user_stake.claimed_rewards_wad = 0;
+    } else {
+        // Partial request: keep the active remainder's pending intact and add a
+        // fresh debt snapshot for the re-added tokens (mirrors add-stake).
+        user_stake.reward_debt = user_stake
+            .reward_debt
+            .checked_add(new_token_debt)
+            .ok_or(StakingError::MathOverflow)?;
+    }
+
+    user_stake.amount = user_stake
+        .amount
+        .checked_add(frozen)
+        .ok_or(StakingError::MathOverflow)?;
+
+    pool.total_reward_debt = pool
+        .total_reward_debt
+        .checked_add(new_token_debt)
+        .ok_or(StakingError::MathOverflow)?;
 
     // Clear the request fields
     user_stake.unstake_request_amount = 0;
     user_stake.unstake_request_time = 0;
 
-    // Save user stake
-    let mut stake_data = user_stake_info.try_borrow_mut_data()?;
-    user_stake.serialize(&mut &mut stake_data[..])?;
+    // Save pool and user stake
+    {
+        let mut pool_data = pool_info.try_borrow_mut_data()?;
+        pool.serialize(&mut &mut pool_data[..])?;
+    }
+    {
+        let mut stake_data = user_stake_info.try_borrow_mut_data()?;
+        user_stake.serialize(&mut &mut stake_data[..])?;
+    }
 
-    msg!("Cancelled unstake request for {} tokens", cancelled_amount);
+    msg!("Cancelled unstake request for {} tokens", frozen);
 
     Ok(())
 }

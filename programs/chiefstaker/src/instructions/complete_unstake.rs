@@ -1,22 +1,31 @@
 //! Complete unstake instruction (after cooldown period has elapsed)
 
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
     clock::Clock,
     entrypoint::ProgramResult,
+    msg,
+    program::invoke_signed,
     pubkey::Pubkey,
     sysvar::Sysvar,
 };
+use spl_token_2022::extension::StateWithExtensions;
 
 use crate::{
     error::StakingError,
-    state::{is_valid_token_program, StakingPool, UserStake},
+    math::WAD,
+    state::{is_valid_token_program, StakingPool, UserStake, POOL_SEED},
 };
 
-use super::unstake::execute_unstake;
+use super::unstake::close_user_stake_account;
 
-/// Complete unstake after cooldown has elapsed
+/// Complete unstake after the cooldown has elapsed.
+///
+/// The reward settlement and pool accounting already happened at RequestUnstake;
+/// this instruction only delivers the frozen tokens from the vault to the user
+/// and, when the position is fully unstaked with nothing owed, closes the stake
+/// account to reclaim its rent.
 ///
 /// Accounts (same as Unstake):
 /// 0. `[writable]` Pool account
@@ -26,6 +35,8 @@ use super::unstake::execute_unstake;
 /// 4. `[]` Token mint
 /// 5. `[writable, signer]` User/owner
 /// 6. `[]` Token 2022 program
+/// 7. `[]` System program (optional, accepted for call-site symmetry)
+/// 8. `[writable]` Metadata PDA (optional, to decrement member_count on close)
 pub fn process_complete_unstake(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -54,7 +65,7 @@ pub fn process_complete_unstake(
     if pool_info.owner != program_id {
         return Err(StakingError::InvalidAccountOwner.into());
     }
-    let mut pool = StakingPool::try_from_slice(&pool_info.try_borrow_data()?)?;
+    let pool = StakingPool::try_from_slice(&pool_info.try_borrow_data()?)?;
     if !pool.is_initialized() {
         return Err(StakingError::NotInitialized.into());
     }
@@ -117,31 +128,61 @@ pub fn process_complete_unstake(
         return Err(StakingError::CooldownNotElapsed.into());
     }
 
-    // Lazily adjust exp_start_factor if pool has been rebased
-    user_stake.sync_to_pool(&pool)?;
+    // The frozen tokens awaiting withdrawal (already settled at request time)
+    let withdraw_amount = user_stake.unstake_request_amount;
 
-    let amount = user_stake.unstake_request_amount;
-
-    // Clear the request fields before execute_unstake (which serializes)
+    // Clear the request fields
     user_stake.unstake_request_amount = 0;
     user_stake.unstake_request_time = 0;
 
-    // Optional trailing system program for legacy account reallocation
-    let system_program_info = account_info_iter.next();
+    // Close iff fully unstaked and nothing owed; otherwise keep the account so the
+    // remaining position keeps earning / residual rewards stay claimable.
+    let should_close = user_stake.amount == 0 && user_stake.reward_debt / WAD == 0;
 
-    // Execute the shared unstake logic
-    execute_unstake(
-        program_id,
-        &mut pool,
-        &mut user_stake,
-        pool_info,
-        user_stake_info,
-        token_vault_info,
-        user_token_info,
-        mint_info,
-        user_info,
-        amount,
-        current_time,
-        system_program_info,
-    )
+    // Persist the cleared request fields before the CPI
+    {
+        let mut stake_data = user_stake_info.try_borrow_mut_data()?;
+        user_stake.serialize(&mut &mut stake_data[..])?;
+    }
+
+    // Transfer the frozen tokens from vault to user (CPI, pool PDA signs)
+    let mint_data = mint_info.try_borrow_data()?;
+    let mint = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&mint_data)?;
+    let decimals = mint.base.decimals;
+    drop(mint_data);
+
+    let pool_seeds = &[POOL_SEED, pool.mint.as_ref(), &[pool.bump]];
+
+    invoke_signed(
+        &spl_token_2022::instruction::transfer_checked(
+            mint_info.owner,
+            token_vault_info.key,
+            mint_info.key,
+            user_token_info.key,
+            pool_info.key,
+            &[],
+            withdraw_amount,
+            decimals,
+        )?,
+        &[
+            token_vault_info.clone(),
+            mint_info.clone(),
+            user_token_info.clone(),
+            pool_info.clone(),
+        ],
+        &[pool_seeds],
+    )?;
+
+    msg!("Completed unstake of {} tokens", withdraw_amount);
+
+    // Optional trailing accounts: system program (unused here) then metadata (close)
+    let _system_program_info = account_info_iter.next();
+    let metadata_info = account_info_iter.next();
+
+    // A full unstake fully resets the position; close the account to reclaim rent.
+    if should_close {
+        close_user_stake_account(program_id, pool_info, user_stake_info, user_info, metadata_info)?;
+    }
+
+    Ok(())
 }

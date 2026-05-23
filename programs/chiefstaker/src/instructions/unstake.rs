@@ -7,6 +7,7 @@ use solana_program::{
     entrypoint::ProgramResult,
     msg,
     program::invoke_signed,
+    program_error::ProgramError,
     pubkey::Pubkey,
     sysvar::Sysvar,
 };
@@ -16,35 +17,38 @@ use crate::{
     error::StakingError,
     events::{emit_reward_payout, RewardPayoutType},
     math::{calculate_user_weighted_stake, wad_div, wad_mul, U256, WAD},
-    state::{is_valid_token_program, StakingPool, UserStake, POOL_SEED},
+    state::{is_valid_token_program, PoolMetadata, StakingPool, UserStake, POOL_SEED},
 };
 
-/// Shared unstake logic used by both process_unstake and process_complete_unstake.
-/// Handles: reward claiming, pool math updates (sum_stake_exp, total_staked),
-/// reward_debt recalculation, and token transfer.
+/// Accounting-only portion of an unstake, shared by direct `Unstake`
+/// (`execute_unstake`) and the cooldown `RequestUnstake` flow.
+///
+/// Settles pending rewards, redistributes the unstaked portion's forfeited
+/// immature SOL, removes the unstaked weight/stake from the pool, recomputes the
+/// remaining position's reward debt, and pre-updates `last_synced_lamports`.
+///
+/// Mutates `pool` and `user_stake` in memory and reallocs the stake account if it
+/// is a legacy size, but does NOT serialize accounts, transfer tokens, or move
+/// reward lamports — the caller does those. Returns the lamports the caller must
+/// transfer pool -> user as the reward payout.
 ///
 /// Assumes all account validation has been done by the caller.
-pub fn execute_unstake<'a>(
-    _program_id: &Pubkey,
+pub fn settle_unstake_accounting<'a>(
     pool: &mut StakingPool,
     user_stake: &mut UserStake,
     pool_info: &AccountInfo<'a>,
     user_stake_info: &AccountInfo<'a>,
-    token_vault_info: &AccountInfo<'a>,
-    user_token_info: &AccountInfo<'a>,
-    mint_info: &AccountInfo<'a>,
     user_info: &AccountInfo<'a>,
     amount: u64,
     current_time: i64,
     system_program_info: Option<&AccountInfo<'a>>,
-) -> ProgramResult {
-
+) -> Result<u64, ProgramError> {
     // Capture old reward_debt for total_reward_debt bookkeeping
     let old_reward_debt = user_stake.reward_debt;
 
-    // Calculate pending rewards (but defer SOL transfer until after token CPI,
-    // because the Solana runtime verifies CPI account balances and user_info
-    // is not a CPI account)
+    // Calculate pending rewards (the caller defers the SOL transfer until after
+    // any token CPI, because the Solana runtime verifies CPI account balances and
+    // user_info is not a CPI account).
     let mut reward_transfer_amount: u64 = 0;
 
     let user_weighted = calculate_user_weighted_stake(
@@ -92,7 +96,7 @@ pub fn execute_unstake<'a>(
                     .ok_or(StakingError::MathOverflow)?;
                 unpaid_rewards_wad = pending.saturating_sub(paid_wad);
 
-                // Pre-update last_synced_lamports (actual SOL transfer deferred to after CPI)
+                // Pre-update last_synced_lamports (actual SOL transfer deferred to caller)
                 if reward_transfer_amount > 0 {
                     pool.last_synced_lamports = pool.last_synced_lamports.saturating_sub(reward_transfer_amount);
                 }
@@ -205,6 +209,93 @@ pub fn execute_unstake<'a>(
     // Realloc legacy accounts to current size (payer = user)
     UserStake::maybe_realloc(user_stake_info, user_info, system_program_info)?;
 
+    Ok(reward_transfer_amount)
+}
+
+/// Close a fully-unstaked user stake account: drain its rent lamports to the
+/// user, zero its data so it can't be re-read as a valid stake, and decrement
+/// the pool member_count if a metadata account is supplied.
+///
+/// Mirrors `process_close_stake_account`. The caller must ensure the position is
+/// fully unstaked with no residual rewards owed before calling.
+pub fn close_user_stake_account<'a>(
+    program_id: &Pubkey,
+    pool_info: &AccountInfo<'a>,
+    user_stake_info: &AccountInfo<'a>,
+    user_info: &AccountInfo<'a>,
+    metadata_info: Option<&AccountInfo<'a>>,
+) -> ProgramResult {
+    // Transfer all lamports from stake account to user (closes the account)
+    let stake_lamports = user_stake_info.lamports();
+    **user_stake_info.try_borrow_mut_lamports()? = 0;
+    **user_info.try_borrow_mut_lamports()? += stake_lamports;
+
+    // Zero out the account data so it can't be re-read as a valid stake
+    {
+        let mut stake_data = user_stake_info.try_borrow_mut_data()?;
+        stake_data.fill(0);
+    }
+
+    // Optional metadata account: decrement member_count on close
+    if let Some(metadata_info) = metadata_info {
+        if metadata_info.owner == program_id && !metadata_info.data_is_empty() {
+            let (expected_metadata, _) = PoolMetadata::derive_pda(pool_info.key, program_id);
+            if *metadata_info.key == expected_metadata {
+                let mut metadata =
+                    PoolMetadata::try_from_slice(&metadata_info.try_borrow_data()?)?;
+                if metadata.is_initialized() && metadata.pool == *pool_info.key {
+                    metadata.member_count = metadata.member_count.saturating_sub(1);
+                    let mut metadata_data = metadata_info.try_borrow_mut_data()?;
+                    metadata.serialize(&mut &mut metadata_data[..])?;
+                }
+            }
+        }
+    }
+
+    msg!("Closed user stake account, returned {} lamports", stake_lamports);
+    Ok(())
+}
+
+/// Shared unstake logic for the direct `Unstake` path (cooldown == 0).
+///
+/// Settles rewards and pool math via `settle_unstake_accounting`, transfers the
+/// staked tokens back to the user, pays out the reward SOL, and — when the
+/// position is fully unstaked with nothing owed — closes the stake account.
+///
+/// Assumes all account validation has been done by the caller.
+#[allow(clippy::too_many_arguments)]
+pub fn execute_unstake<'a>(
+    program_id: &Pubkey,
+    pool: &mut StakingPool,
+    user_stake: &mut UserStake,
+    pool_info: &AccountInfo<'a>,
+    user_stake_info: &AccountInfo<'a>,
+    token_vault_info: &AccountInfo<'a>,
+    user_token_info: &AccountInfo<'a>,
+    mint_info: &AccountInfo<'a>,
+    user_info: &AccountInfo<'a>,
+    amount: u64,
+    current_time: i64,
+    system_program_info: Option<&AccountInfo<'a>>,
+    metadata_info: Option<&AccountInfo<'a>>,
+) -> ProgramResult {
+    let reward_transfer_amount = settle_unstake_accounting(
+        pool,
+        user_stake,
+        pool_info,
+        user_stake_info,
+        user_info,
+        amount,
+        current_time,
+        system_program_info,
+    )?;
+
+    // A full unstake fully resets the position. Close the account afterward when
+    // nothing is owed; if residual rewards remain (pool underfunded), keep it open
+    // so the user can claim them, then close.
+    let fully_unstaked = user_stake.amount == 0;
+    let has_residual = user_stake.reward_debt / WAD > 0;
+
     // Save states (before CPI — pool data includes pre-updated last_synced_lamports)
     {
         let mut pool_data = pool_info.try_borrow_mut_data()?;
@@ -254,6 +345,11 @@ pub fn execute_unstake<'a>(
 
     msg!("Unstaked {} tokens", amount);
 
+    // Close the account when fully unstaked and nothing is owed.
+    if fully_unstaked && !has_residual {
+        close_user_stake_account(program_id, pool_info, user_stake_info, user_info, metadata_info)?;
+    }
+
     Ok(())
 }
 
@@ -267,6 +363,8 @@ pub fn execute_unstake<'a>(
 /// 4. `[]` Token mint
 /// 5. `[writable, signer]` User/owner
 /// 6. `[]` Token 2022 program
+/// 7. `[]` System program (optional, for legacy account reallocation)
+/// 8. `[writable]` Metadata PDA (optional, to decrement member_count on full-unstake close)
 pub fn process_unstake(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -380,8 +478,9 @@ pub fn process_unstake(
         }
     }
 
-    // Optional trailing system program for legacy account reallocation
+    // Optional trailing accounts: system program (legacy realloc) then metadata (close)
     let system_program_info = account_info_iter.next();
+    let metadata_info = account_info_iter.next();
 
     // Execute the shared unstake logic
     execute_unstake(
@@ -397,5 +496,6 @@ pub fn process_unstake(
         amount,
         current_time,
         system_program_info,
+        metadata_info,
     )
 }

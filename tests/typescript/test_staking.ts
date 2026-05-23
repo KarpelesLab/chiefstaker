@@ -172,21 +172,29 @@ function createUnstakeInstruction(
   user: PublicKey,
   amount: bigint,
   tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID,
+  metadata?: PublicKey,
 ): TransactionInstruction {
   const data = Buffer.alloc(1 + 8);
   data.writeUInt8(InstructionType.Unstake, 0);
   data.writeBigUInt64LE(amount, 1);
 
+  const keys = [
+    { pubkey: pool, isSigner: false, isWritable: true },
+    { pubkey: userStake, isSigner: false, isWritable: true },
+    { pubkey: tokenVault, isSigner: false, isWritable: true },
+    { pubkey: userToken, isSigner: false, isWritable: true },
+    { pubkey: mint, isSigner: false, isWritable: false },
+    { pubkey: user, isSigner: true, isWritable: true },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+  ];
+  if (metadata) {
+    // Optional trailing accounts are positional: system program then metadata.
+    keys.push({ pubkey: SystemProgram.programId, isSigner: false, isWritable: false });
+    keys.push({ pubkey: metadata, isSigner: false, isWritable: true });
+  }
+
   return new TransactionInstruction({
-    keys: [
-      { pubkey: pool, isSigner: false, isWritable: true },
-      { pubkey: userStake, isSigner: false, isWritable: true },
-      { pubkey: tokenVault, isSigner: false, isWritable: true },
-      { pubkey: userToken, isSigner: false, isWritable: true },
-      { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: user, isSigner: true, isWritable: true },
-      { pubkey: tokenProgramId, isSigner: false, isWritable: false },
-    ],
+    keys,
     programId: PROGRAM_ID,
     data,
   });
@@ -365,7 +373,8 @@ function createRequestUnstakeInstruction(
     keys: [
       { pubkey: pool, isSigner: false, isWritable: true },
       { pubkey: userStake, isSigner: false, isWritable: true },
-      { pubkey: user, isSigner: true, isWritable: false },
+      // owner is writable: RequestUnstake settles & pays out earned rewards now
+      { pubkey: user, isSigner: true, isWritable: true },
     ],
     programId: PROGRAM_ID,
     data,
@@ -380,20 +389,28 @@ function createCompleteUnstakeInstruction(
   mint: PublicKey,
   user: PublicKey,
   tokenProgramId: PublicKey = TOKEN_2022_PROGRAM_ID,
+  metadata?: PublicKey,
 ): TransactionInstruction {
   const data = Buffer.alloc(1);
   data.writeUInt8(InstructionType.CompleteUnstake, 0);
 
+  const keys = [
+    { pubkey: pool, isSigner: false, isWritable: true },
+    { pubkey: userStake, isSigner: false, isWritable: true },
+    { pubkey: tokenVault, isSigner: false, isWritable: true },
+    { pubkey: userToken, isSigner: false, isWritable: true },
+    { pubkey: mint, isSigner: false, isWritable: false },
+    { pubkey: user, isSigner: true, isWritable: true },
+    { pubkey: tokenProgramId, isSigner: false, isWritable: false },
+  ];
+  if (metadata) {
+    // Optional trailing accounts are positional: system program then metadata.
+    keys.push({ pubkey: SystemProgram.programId, isSigner: false, isWritable: false });
+    keys.push({ pubkey: metadata, isSigner: false, isWritable: true });
+  }
+
   return new TransactionInstruction({
-    keys: [
-      { pubkey: pool, isSigner: false, isWritable: true },
-      { pubkey: userStake, isSigner: false, isWritable: true },
-      { pubkey: tokenVault, isSigner: false, isWritable: true },
-      { pubkey: userToken, isSigner: false, isWritable: true },
-      { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: user, isSigner: true, isWritable: true },
-      { pubkey: tokenProgramId, isSigner: false, isWritable: false },
-    ],
+    keys,
     programId: PROGRAM_ID,
     data,
   });
@@ -409,7 +426,8 @@ function createCancelUnstakeRequestInstruction(
 
   return new TransactionInstruction({
     keys: [
-      { pubkey: pool, isSigner: false, isWritable: false },
+      // pool is writable: CancelUnstakeRequest restores stake to pool accounting
+      { pubkey: pool, isSigner: false, isWritable: true },
       { pubkey: userStake, isSigner: false, isWritable: true },
       { pubkey: user, isSigner: true, isWritable: false },
     ],
@@ -712,8 +730,9 @@ class TestContext {
     return await sendAndConfirmTransaction(this.connection, tx, [this.payer, staker]);
   }
 
-  async unstake(user: Keypair, userToken: PublicKey, amount: bigint): Promise<string> {
+  async unstake(user: Keypair, userToken: PublicKey, amount: bigint, withMetadata: boolean = false): Promise<string> {
     const [userStakePDA] = deriveUserStakePDA(this.poolPDA, user.publicKey);
+    const [metadataPDA] = deriveMetadataPDA(this.poolPDA);
 
     const ix = createUnstakeInstruction(
       this.poolPDA,
@@ -724,6 +743,7 @@ class TestContext {
       user.publicKey,
       amount,
       this.tokenProgramId,
+      withMetadata ? metadataPDA : undefined,
     );
 
     const tx = new Transaction().add(ix);
@@ -837,8 +857,9 @@ class TestContext {
     return await sendAndConfirmTransaction(this.connection, tx, [this.payer, user]);
   }
 
-  async completeUnstake(user: Keypair, userToken: PublicKey): Promise<string> {
+  async completeUnstake(user: Keypair, userToken: PublicKey, withMetadata: boolean = false): Promise<string> {
     const [userStakePDA] = deriveUserStakePDA(this.poolPDA, user.publicKey);
+    const [metadataPDA] = deriveMetadataPDA(this.poolPDA);
 
     const ix = createCompleteUnstakeInstruction(
       this.poolPDA,
@@ -848,6 +869,7 @@ class TestContext {
       this.mint,
       user.publicKey,
       this.tokenProgramId,
+      withMetadata ? metadataPDA : undefined,
     );
 
     const tx = new Transaction().add(ix);
@@ -1702,6 +1724,142 @@ async function runTests() {
       }
     }
     if (!doubleRequestFailed) throw new Error('Double request should fail');
+  });
+
+  // Test: requested coins stop earning rewards during cooldown (req #4)
+  await test(`[${tokenProgramLabel}] Cooldown: requested coins stop earning rewards`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(60));
+    await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(60));
+
+    // Two equal stakers
+    const alice = Keypair.generate();
+    const bob = Keypair.generate();
+    await airdropAndConfirm(connection, alice.publicKey, LAMPORTS_PER_SOL);
+    await airdropAndConfirm(connection, bob.publicKey, LAMPORTS_PER_SOL);
+    const aliceToken = await ctx.createUserTokenAccount(alice.publicKey);
+    const bobToken = await ctx.createUserTokenAccount(bob.publicKey);
+    await ctx.mintTokens(aliceToken, BigInt(1_000_000_000));
+    await ctx.mintTokens(bobToken, BigInt(1_000_000_000));
+    await ctx.stake(alice, aliceToken, BigInt(1_000_000_000));
+    await ctx.stake(bob, bobToken, BigInt(1_000_000_000));
+
+    // Let weight accrue a little
+    console.log('    Waiting 4s for weight...');
+    await new Promise(r => setTimeout(r, 4000));
+
+    // Alice requests a full unstake -> her coins leave the pool's reward accounting
+    await ctx.requestUnstake(alice, BigInt(1_000_000_000));
+
+    const poolAfterReq = await ctx.readPoolState();
+    if (poolAfterReq.totalStaked !== BigInt(1_000_000_000)) {
+      throw new Error(`Expected total_staked 1000000000 after Alice's request, got ${poolAfterReq.totalStaked}`);
+    }
+
+    // New rewards arrive AFTER the request
+    await ctx.depositRewards(BigInt(LAMPORTS_PER_SOL / 2));
+
+    // Bob (still active) earns; Alice (frozen) earns nothing new
+    const bobBefore = await ctx.getBalance(bob.publicKey);
+    await ctx.claimRewards(bob);
+    const bobReward = await ctx.getBalance(bob.publicKey) - bobBefore;
+
+    const aliceBefore = await ctx.getBalance(alice.publicKey);
+    await ctx.claimRewards(alice);
+    const aliceReward = await ctx.getBalance(alice.publicKey) - aliceBefore;
+
+    console.log(`    Bob reward: ${bobReward}, Alice (frozen) reward: ${aliceReward}`);
+    if (bobReward <= 0) throw new Error(`Active staker Bob should earn from the new deposit, got ${bobReward}`);
+    if (aliceReward > 0) throw new Error(`Frozen staker Alice should earn nothing new, got ${aliceReward}`);
+  });
+
+  // Test: partial request removes proportional stake/weight (req #1, #3)
+  await test(`[${tokenProgramLabel}] Cooldown: partial request removes proportional stake`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+    await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(60));
+
+    const user = Keypair.generate();
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(1_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    // Request 40% -> active stake (and thus weight) drops to 60%
+    await ctx.requestUnstake(user, BigInt(400_000_000));
+
+    const pool = await ctx.readPoolState();
+    if (pool.totalStaked !== BigInt(600_000_000)) {
+      throw new Error(`Expected total_staked 600000000, got ${pool.totalStaked}`);
+    }
+    const state = await ctx.readUserStakeState(user.publicKey);
+    if (state.amount !== BigInt(600_000_000)) {
+      throw new Error(`Expected active amount 600000000, got ${state.amount}`);
+    }
+  });
+
+  // Test: cooldown full unstake closes the account (req #2)
+  await test(`[${tokenProgramLabel}] Cooldown: full unstake closes the account`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+    await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(5));
+
+    const user = Keypair.generate();
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(1_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    await ctx.requestUnstake(user, BigInt(1_000_000_000));
+    console.log('    Waiting 6s for cooldown...');
+    await new Promise(r => setTimeout(r, 6000));
+    await ctx.completeUnstake(user, userToken);
+
+    const [userStakePDA] = deriveUserStakePDA(ctx.poolPDA, user.publicKey);
+    const closed = await connection.getAccountInfo(userStakePDA);
+    if (closed !== null) throw new Error('Stake account should be closed after full cooldown unstake');
+
+    const balance = await ctx.getTokenBalance(userToken);
+    if (balance !== BigInt(1_000_000_000)) throw new Error(`Expected 1000000000 tokens back, got ${balance}`);
+  });
+
+  // Test: cancel restores the frozen coins to the active position
+  await test(`[${tokenProgramLabel}] Cooldown: cancel restores stake to the pool`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+    await ctx.updatePoolSettings(ctx.payer, null, null, BigInt(60));
+
+    const user = Keypair.generate();
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(1_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    // Full request removes the stake from pool accounting
+    await ctx.requestUnstake(user, BigInt(1_000_000_000));
+    const poolAfterReq = await ctx.readPoolState();
+    if (poolAfterReq.totalStaked !== 0n) {
+      throw new Error(`Expected total_staked 0 after full request, got ${poolAfterReq.totalStaked}`);
+    }
+
+    // Cancel restores it
+    await ctx.cancelUnstakeRequest(user);
+    const poolAfterCancel = await ctx.readPoolState();
+    if (poolAfterCancel.totalStaked !== BigInt(1_000_000_000)) {
+      throw new Error(`Expected total_staked 1000000000 after cancel, got ${poolAfterCancel.totalStaked}`);
+    }
+    const state = await ctx.readUserStakeState(user.publicKey);
+    if (state.amount !== BigInt(1_000_000_000)) {
+      throw new Error(`Expected active amount 1000000000 after cancel, got ${state.amount}`);
+    }
   });
 
   // Test: Existing pools (zero reserved fields) work unchanged
@@ -3590,8 +3748,8 @@ async function runTests() {
     if (meta2.memberCount !== 1n) throw new Error(`Expected still 1, got ${meta2.memberCount}`);
   });
 
-  // Test: CloseStakeAccount with metadata decrements member_count
-  await test(`[${tokenProgramLabel}] CloseStakeAccount with metadata decrements member_count`, async () => {
+  // Test: full Unstake auto-closes the account and decrements member_count
+  await test(`[${tokenProgramLabel}] Full unstake auto-closes account and decrements member_count`, async () => {
     const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
     await ctx.setup();
     await ctx.createMintWithMetadata(9, 'CloseTest', 'CLZ');
@@ -3608,13 +3766,19 @@ async function runTests() {
     const meta1 = await ctx.readMetadata();
     if (meta1.memberCount !== 1n) throw new Error(`Expected 1, got ${meta1.memberCount}`);
 
-    // Unstake everything
-    await ctx.unstake(user, userToken, BigInt(1_000_000_000));
+    // Full unstake (with metadata) auto-closes the account and decrements member_count
+    await ctx.unstake(user, userToken, BigInt(1_000_000_000), true);
 
-    // Close stake account with metadata
-    await ctx.closeStakeAccount(user, true);
+    const [userStakePDA] = deriveUserStakePDA(ctx.poolPDA, user.publicKey);
+    const closed = await connection.getAccountInfo(userStakePDA);
+    if (closed !== null) throw new Error('Stake account should be closed after full unstake');
+
     const meta2 = await ctx.readMetadata();
-    if (meta2.memberCount !== 0n) throw new Error(`Expected 0 after close, got ${meta2.memberCount}`);
+    if (meta2.memberCount !== 0n) throw new Error(`Expected 0 after full unstake, got ${meta2.memberCount}`);
+
+    // Tokens fully returned
+    const balance = await ctx.getTokenBalance(userToken);
+    if (balance !== BigInt(1_000_000_000)) throw new Error(`Expected 1000000000 tokens back, got ${balance}`);
   });
 
   // Test: SetPoolMetadata preserves member_count on update

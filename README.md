@@ -63,16 +63,16 @@ Rewards can be deposited directly via instruction or sent to the pool PDA (e.g.,
 |---|-------------|-------------|
 | 0 | `InitializePool` | Create a new staking pool for a Token 2022 mint |
 | 1 | `Stake` | Stake tokens into the pool |
-| 2 | `Unstake` | Unstake tokens (direct, when no cooldown) |
+| 2 | `Unstake` | Unstake tokens (direct, when no cooldown); full unstake closes the account |
 | 3 | `ClaimRewards` | Claim accumulated SOL rewards |
 | 4 | `DepositRewards` | Deposit SOL rewards into the pool |
 | 5 | `SyncPool` | Rebase pool math to prevent overflow |
 | 6 | `SyncRewards` | Sync SOL sent directly to the pool PDA |
 | 7 | `UpdatePoolSettings` | Set min stake, lock duration, cooldown (authority only) |
 | 8 | `TransferAuthority` | Transfer or renounce pool authority |
-| 9 | `RequestUnstake` | Start unstake cooldown (tokens keep earning) |
-| 10 | `CompleteUnstake` | Finish unstake after cooldown elapsed |
-| 11 | `CancelUnstakeRequest` | Cancel a pending unstake request |
+| 9 | `RequestUnstake` | Start unstake cooldown (requested coins stop earning; earned rewards settled) |
+| 10 | `CompleteUnstake` | Finish unstake after cooldown; full unstake closes the account |
+| 11 | `CancelUnstakeRequest` | Cancel a pending request, restoring coins to the active position |
 | 12 | `CloseStakeAccount` | Close zero-balance stake account to reclaim rent |
 | 13 | ~~`FixTotalRewardDebt`~~ | Deprecated (no-op, returns error) |
 | 14 | `SetPoolMetadata` | Set pool name, tags, and URL (permissionless) |
