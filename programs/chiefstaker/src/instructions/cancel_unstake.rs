@@ -102,62 +102,72 @@ pub fn process_cancel_unstake_request(
 
     let frozen = user_stake.unstake_request_amount;
 
-    // Edge case: a full unstake request (amount == 0) that still has unpaid
-    // residual rewards stores those in reward_debt. Reactivating the position
-    // would overwrite that storage with a snapshot, losing the residual. Require
-    // the user to claim it first (ClaimRewards works on the amount==0 path).
-    if user_stake.amount == 0 && user_stake.reward_debt / WAD > 0 {
-        return Err(StakingError::ResidualRewardsPending.into());
-    }
+    if user_stake.unstake_request_settled == 1 {
+        // New-style request: RequestUnstake removed the frozen coins from the pool
+        // and settled their rewards. Restore them to the active position.
 
-    // Restore the frozen coins to the active position.
-    let frozen_wad = (frozen as u128)
-        .checked_mul(WAD)
-        .ok_or(StakingError::MathOverflow)?;
+        // Edge case: a full unstake request (amount == 0) that still has unpaid
+        // residual rewards stores those in reward_debt. Reactivating the position
+        // would overwrite that storage with a snapshot, losing the residual.
+        // Require the user to claim it first (ClaimRewards works on amount==0).
+        if user_stake.amount == 0 && user_stake.reward_debt / WAD > 0 {
+            return Err(StakingError::ResidualRewardsPending.into());
+        }
 
-    // sum_stake_exp += frozen * exp_start_factor (restores weight / maturity)
-    let contribution = wad_mul(frozen_wad, user_stake.exp_start_factor)?;
-    let new_sum = pool
-        .get_sum_stake_exp()
-        .checked_add(U256::from_u128(contribution))
-        .ok_or(StakingError::MathOverflow)?;
-    pool.set_sum_stake_exp(new_sum);
+        let frozen_wad = (frozen as u128)
+            .checked_mul(WAD)
+            .ok_or(StakingError::MathOverflow)?;
 
-    // total_staked += frozen
-    pool.total_staked = pool
-        .total_staked
-        .checked_add(frozen as u128)
-        .ok_or(StakingError::MathOverflow)?;
+        // sum_stake_exp += frozen * exp_start_factor (restores weight / maturity)
+        let contribution = wad_mul(frozen_wad, user_stake.exp_start_factor)?;
+        let new_sum = pool
+            .get_sum_stake_exp()
+            .checked_add(U256::from_u128(contribution))
+            .ok_or(StakingError::MathOverflow)?;
+        pool.set_sum_stake_exp(new_sum);
 
-    // Fresh reward snapshot for the re-added tokens (no retroactive rewards)
-    let new_token_debt = wad_mul(frozen_wad, pool.acc_reward_per_weighted_share)?;
+        // total_staked += frozen
+        pool.total_staked = pool
+            .total_staked
+            .checked_add(frozen as u128)
+            .ok_or(StakingError::MathOverflow)?;
 
-    if user_stake.amount == 0 {
-        // Was a full request (no residual remains): start clean.
-        user_stake.reward_debt = new_token_debt;
-        user_stake.claimed_rewards_wad = 0;
-    } else {
-        // Partial request: keep the active remainder's pending intact and add a
-        // fresh debt snapshot for the re-added tokens (mirrors add-stake).
-        user_stake.reward_debt = user_stake
-            .reward_debt
+        // Fresh reward snapshot for the re-added tokens (no retroactive rewards)
+        let new_token_debt = wad_mul(frozen_wad, pool.acc_reward_per_weighted_share)?;
+
+        if user_stake.amount == 0 {
+            // Was a full request (no residual remains): start clean.
+            user_stake.reward_debt = new_token_debt;
+            user_stake.claimed_rewards_wad = 0;
+        } else {
+            // Partial request: keep the active remainder's pending intact and add a
+            // fresh debt snapshot for the re-added tokens (mirrors add-stake).
+            user_stake.reward_debt = user_stake
+                .reward_debt
+                .checked_add(new_token_debt)
+                .ok_or(StakingError::MathOverflow)?;
+        }
+
+        user_stake.amount = user_stake
+            .amount
+            .checked_add(frozen)
+            .ok_or(StakingError::MathOverflow)?;
+
+        pool.total_reward_debt = pool
+            .total_reward_debt
             .checked_add(new_token_debt)
             .ok_or(StakingError::MathOverflow)?;
+    } else {
+        // Legacy in-flight request (created before this upgrade): the coins were
+        // never removed from the pool's accounting, so there is nothing to restore
+        // — adding them back here would credit the user stake they never lost.
+        // Just clear the request, matching the pre-upgrade cancel behavior.
     }
-
-    user_stake.amount = user_stake
-        .amount
-        .checked_add(frozen)
-        .ok_or(StakingError::MathOverflow)?;
-
-    pool.total_reward_debt = pool
-        .total_reward_debt
-        .checked_add(new_token_debt)
-        .ok_or(StakingError::MathOverflow)?;
 
     // Clear the request fields
     user_stake.unstake_request_amount = 0;
     user_stake.unstake_request_time = 0;
+    user_stake.unstake_request_settled = 0;
 
     // Save pool and user stake
     {

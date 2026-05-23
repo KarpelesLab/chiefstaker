@@ -146,9 +146,13 @@ pub fn process_request_unstake(
         system_program_info,
     )?;
 
-    // Record the pending request (the frozen amount awaiting withdrawal)
+    // Record the pending request (the frozen amount awaiting withdrawal).
+    // Mark it as settled-at-request so Cancel/Complete know the coins were already
+    // removed from the pool here (distinguishes new requests from legacy in-flight
+    // requests created before this upgrade).
     user_stake.unstake_request_amount = amount;
     user_stake.unstake_request_time = current_time;
+    user_stake.unstake_request_settled = 1;
 
     // Save pool and user stake
     {

@@ -879,7 +879,7 @@
       "docs": [
         "User stake account.",
         "PDA seeds: [\"stake\", pool, owner].",
-        "Size: 177 bytes (legacy accounts at 153 or 161 bytes are lazily reallocated)."
+        "Size: 178 bytes (legacy accounts at 153, 161, or 177 bytes are lazily reallocated)."
       ],
       "type": {
         "kind": "struct",
@@ -955,6 +955,11 @@
             "name": "claimedRewardsWad",
             "type": "u128",
             "docs": ["Cumulative WAD-scaled rewards already paid for the current position. Used for frequency-independent claims: pending = full_entitlement - claimedRewardsWad. Reset to 0 on stake/unstake. Defaults to 0 for legacy accounts."]
+          },
+          {
+            "name": "unstakeRequestSettled",
+            "type": "u8",
+            "docs": ["1 when the pending unstake request was created under the settle-at-request flow (frozen coins already removed from the pool). 0 = no request, or a legacy in-flight request from before this upgrade. Cancel/Complete branch on this to avoid double-restoring or double-removing legacy requests. Defaults to 0 for legacy accounts."]
           }
         ]
       }
