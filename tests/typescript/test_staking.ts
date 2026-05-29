@@ -68,6 +68,7 @@ enum InstructionType {
   TakeFeeOwnership = 15,
   StakeOnBehalf = 16,
   FixStakeAccount = 17,
+  MigrateStake = 18,
 }
 
 // Helper to derive PDAs
@@ -536,6 +537,30 @@ function createCloseStakeAccountInstruction(
   });
 }
 
+function createMigrateStakeInstruction(
+  pool: PublicKey,
+  sourceUserStake: PublicKey,
+  sourceOwner: PublicKey,
+  destinationUserStake: PublicKey,
+  newOwner: PublicKey,
+): TransactionInstruction {
+  const data = Buffer.alloc(1);
+  data.writeUInt8(InstructionType.MigrateStake, 0);
+
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: pool, isSigner: false, isWritable: false },
+      { pubkey: sourceUserStake, isSigner: false, isWritable: true },
+      { pubkey: sourceOwner, isSigner: true, isWritable: true },
+      { pubkey: destinationUserStake, isSigner: false, isWritable: true },
+      { pubkey: newOwner, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    programId: PROGRAM_ID,
+    data,
+  });
+}
+
 function createStakeOnBehalfInstruction(
   pool: PublicKey,
   beneficiaryStake: PublicKey,
@@ -734,6 +759,22 @@ class TestContext {
 
     const tx = new Transaction().add(ix);
     return await sendAndConfirmTransaction(this.connection, tx, [this.payer, user]);
+  }
+
+  async migrate(sourceUser: Keypair, newOwner: PublicKey): Promise<string> {
+    const [sourceStakePDA] = deriveUserStakePDA(this.poolPDA, sourceUser.publicKey);
+    const [destStakePDA] = deriveUserStakePDA(this.poolPDA, newOwner);
+
+    const ix = createMigrateStakeInstruction(
+      this.poolPDA,
+      sourceStakePDA,
+      sourceUser.publicKey,
+      destStakePDA,
+      newOwner,
+    );
+
+    const tx = new Transaction().add(ix);
+    return await sendAndConfirmTransaction(this.connection, tx, [this.payer, sourceUser]);
   }
 
   async stakeOnBehalf(staker: Keypair, stakerToken: PublicKey, beneficiary: PublicKey, amount: bigint): Promise<string> {

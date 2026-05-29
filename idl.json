@@ -756,6 +756,48 @@
           "type": "u128"
         }
       ]
+    },
+    {
+      "name": "migrateStake",
+      "discriminator": [18],
+      "docs": [
+        "Migrate a stake position from one owner to another (clean 1:1 transfer).",
+        "Destination user stake must be empty; all time/maturity/reward state is preserved.",
+        "Pool aggregates and member_count are unchanged. Rejects if source is empty, has a",
+        "pending unstake request, or new_owner == source_owner; or if destination already exists."
+      ],
+      "accounts": [
+        {
+          "name": "pool",
+          "docs": ["Pool account"]
+        },
+        {
+          "name": "sourceUserStake",
+          "writable": true,
+          "docs": ["Source user stake (PDA: [\"stake\", pool, sourceOwner]); will be closed"]
+        },
+        {
+          "name": "sourceOwner",
+          "writable": true,
+          "signer": true,
+          "docs": ["Source owner: signs, pays destination rent, receives source rent refund"]
+        },
+        {
+          "name": "destinationUserStake",
+          "writable": true,
+          "docs": ["Destination user stake (PDA: [\"stake\", pool, newOwner]); must be empty"]
+        },
+        {
+          "name": "newOwner",
+          "docs": ["New owner pubkey (no signer required, mirrors stakeOnBehalf)"]
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111",
+          "docs": ["System program (for create_account CPI)"]
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [

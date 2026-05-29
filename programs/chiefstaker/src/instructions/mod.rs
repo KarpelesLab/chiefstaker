@@ -17,6 +17,7 @@ pub mod set_metadata;
 pub mod take_fee_ownership;
 pub mod stake_on_behalf;
 pub mod distribute_surplus;
+pub mod migrate_stake;
 
 pub use initialize::*;
 pub use stake::*;
@@ -35,3 +36,4 @@ pub use set_metadata::*;
 pub use take_fee_ownership::*;
 pub use stake_on_behalf::*;
 pub use distribute_surplus::*;
+pub use migrate_stake::*;

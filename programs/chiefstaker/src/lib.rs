@@ -255,6 +255,19 @@ pub enum StakingInstruction {
         new_exp_start_factor: u128,
         new_reward_debt: u128,
     },
+
+    /// Migrate a stake position from one owner to another (clean 1:1 transfer).
+    /// Destination must be empty; all time/maturity/reward state is preserved.
+    /// Pool aggregates and `member_count` are unchanged.
+    ///
+    /// Accounts:
+    /// 0. `[]` Pool account
+    /// 1. `[writable]` Source user stake (PDA: ["stake", pool, source_owner]) — closed
+    /// 2. `[writable, signer]` Source owner (pays dest rent, receives source rent)
+    /// 3. `[writable]` Destination user stake (PDA: ["stake", pool, new_owner]) — must be empty
+    /// 4. `[]` New owner (pubkey only; no signer required)
+    /// 5. `[]` System program
+    MigrateStake,
 }
 
 #[cfg(not(feature = "no-entrypoint"))]
@@ -378,6 +391,10 @@ pub fn process_instruction(
                 new_exp_start_factor,
                 new_reward_debt,
             )
+        }
+        StakingInstruction::MigrateStake => {
+            msg!("Instruction: MigrateStake");
+            process_migrate_stake(program_id, accounts)
         }
     }
 }

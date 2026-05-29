@@ -111,6 +111,9 @@ pub enum StakingError {
 
     #[error("Claim residual rewards before cancelling a full unstake request")]
     ResidualRewardsPending,
+
+    #[error("Cannot migrate a stake position to its own owner")]
+    SelfMigrateNotAllowed,
 }
 
 impl From<StakingError> for ProgramError {
