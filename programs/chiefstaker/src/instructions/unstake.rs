@@ -59,11 +59,14 @@ pub fn settle_unstake_accounting<'a>(
         pool.tau_seconds,
     )?;
 
-    // Track unpaid rewards (WAD-scaled) to carry forward in reward_debt
+    // Track unpaid rewards (WAD-scaled) — only meaningful on the full-unstake
+    // path where it is redistributed via last_synced_lamports.
     let mut unpaid_rewards_wad: u128 = 0;
 
     // Compute delta_rps for the position being settled.  Needed for both
-    // reward payout and forfeited-immature redistribution.
+    // reward payout, forfeited-immature redistribution, and (on a partial
+    // unstake) the proportional scaling of reward_debt / claimed_rewards_wad
+    // for the remaining position.
     let amount_wad = (user_stake.amount as u128)
         .checked_mul(WAD)
         .ok_or(StakingError::MathOverflow)?;
@@ -74,8 +77,17 @@ pub fn settle_unstake_accounting<'a>(
         0u128
     };
 
-    if user_weighted > 0 && delta_rps > 0 {
-        let full_entitlement = wad_mul(user_weighted, delta_rps)?;
+    // full_entitlement = what the FULL pre-unstake position has earned up to
+    // now in weighted terms. Computed unconditionally so the partial-unstake
+    // branch can scale it by (A-X)/A to preserve the remaining position's
+    // claimed_rewards_wad tracker.
+    let full_entitlement = if user_weighted > 0 && delta_rps > 0 {
+        wad_mul(user_weighted, delta_rps)?
+    } else {
+        0u128
+    };
+
+    if full_entitlement > 0 {
         // Subtract already-claimed amount (frequency-independent)
         let pending = full_entitlement.saturating_sub(user_stake.claimed_rewards_wad);
 
@@ -90,7 +102,7 @@ pub fn settle_unstake_accounting<'a>(
                 let available_rewards = pool_lamports.saturating_sub(rent_exempt_minimum);
                 reward_transfer_amount = pending_lamports.min(available_rewards as u128) as u64;
 
-                // Track unpaid portion so it remains claimable later
+                // Track unpaid portion (only redistributed on the full-unstake path)
                 let paid_wad = (reward_transfer_amount as u128)
                     .checked_mul(WAD)
                     .ok_or(StakingError::MathOverflow)?;
@@ -165,13 +177,31 @@ pub fn settle_unstake_accounting<'a>(
 
     // Recalculate reward debt for remaining stake
     if user_stake.amount > 0 {
-        // Reset snapshot to current acc_rps for the remaining position.
-        // Position is restructured, so reset both snapshot and claimed tracker.
-        let remaining_amount_wad = (user_stake.amount as u128)
-            .checked_mul(WAD)
+        // Partial unstake: scale reward_debt and claimed_rewards_wad by the
+        // remaining fraction (A-X)/A so the per-token snapshot stays at D/A.
+        // This mirrors the claim path ("snapshot stays fixed so weight
+        // maturation isn't forfeited") and preserves the remaining position's
+        // claim on the immature gap of the pre-unstake delta period — the
+        // forfeiture above already accounts for the unstaked fraction's share.
+        // Resetting reward_debt to remaining * acc_rps (the prior behavior)
+        // zeroed the user's immature-balance display from ~full_gap to 0 on
+        // any partial unstake instead of dropping it by the unstaked fraction.
+        let new_amount_u128 = user_stake.amount as u128;            // A - X
+        let old_amount_u128 = new_amount_u128 + (amount as u128);   // A
+
+        // reward_debt_new = old_reward_debt * (A-X) / A. U256 to avoid overflow.
+        let wide_debt = U256::from_u128(old_reward_debt) * U256::from_u128(new_amount_u128);
+        user_stake.reward_debt = (wide_debt / U256::from_u128(old_amount_u128))
+            .to_u128()
             .ok_or(StakingError::MathOverflow)?;
-        user_stake.reward_debt = wad_mul(remaining_amount_wad, pool.acc_reward_per_weighted_share)?;
-        user_stake.claimed_rewards_wad = 0;
+
+        // claimed_rewards_wad_new = full_entitlement * (A-X) / A.
+        // full_entitlement already represents (old claimed + pending including
+        // any unpaid portion) since pending = full_entitlement - old claimed.
+        let wide_claimed = U256::from_u128(full_entitlement) * U256::from_u128(new_amount_u128);
+        user_stake.claimed_rewards_wad = (wide_claimed / U256::from_u128(old_amount_u128))
+            .to_u128()
+            .ok_or(StakingError::MathOverflow)?;
 
         // Update pool-level aggregate: subtract old, add new (saturating for bootstrapping)
         pool.total_reward_debt = pool
