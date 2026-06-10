@@ -5,7 +5,7 @@ use solana_program::{
     account_info::{next_account_info, AccountInfo},
     entrypoint::ProgramResult,
     msg,
-    program::invoke_signed,
+    program::{invoke, invoke_signed},
     pubkey::Pubkey,
     rent::Rent,
     system_instruction,
@@ -117,28 +117,23 @@ pub fn process_migrate_stake(
     let migrated_amount = user_stake.amount;
 
     // Create the destination account at full LEN, signed by its own PDA seeds.
+    // Pre-fund tolerant: a griefer may have sent stray lamports to the
+    // deterministic destination PDA to block plain create_account.
     let rent = Rent::get()?;
-    let stake_rent = rent.minimum_balance(UserStake::LEN);
     let dest_seeds = &[
         STAKE_SEED,
         pool_info.key.as_ref(),
         new_owner_info.key.as_ref(),
         &[dest_bump],
     ];
-    invoke_signed(
-        &system_instruction::create_account(
-            source_owner_info.key,
-            dest_stake_info.key,
-            stake_rent,
-            UserStake::LEN as u64,
-            program_id,
-        ),
-        &[
-            source_owner_info.clone(),
-            dest_stake_info.clone(),
-            system_program_info.clone(),
-        ],
-        &[dest_seeds],
+    create_pda_account(
+        source_owner_info,
+        dest_stake_info,
+        system_program_info,
+        program_id,
+        UserStake::LEN,
+        &rent,
+        dest_seeds,
     )?;
 
     // Rewrite only the identity fields; everything else (amount, stake_time,
@@ -170,4 +165,65 @@ pub fn process_migrate_stake(
     );
 
     Ok(())
+}
+
+/// Create a program-derived account at `target`, tolerating the case where the
+/// target PDA has already been funded with lamports by a third party.
+///
+/// `system_instruction::create_account` requires the destination to hold zero
+/// lamports, so anyone could permanently block migration to a given recipient
+/// by sending 1 lamport to the deterministic destination stake PDA first. To
+/// avoid that DoS we, when the account is already funded, top it up to
+/// rent-exemption and then `allocate` + `assign` it under its own seeds —
+/// operations that require the PDA's signature and therefore cannot be
+/// performed by a griefer who only transferred lamports. Lamports are only
+/// ever transferred FROM the payer TO the PDA, and only the shortfall to
+/// rent-exemption (nothing if the PDA is already at or above it).
+///
+/// Local mirror of the helper hardening `initialize.rs` against the same
+/// vector (see `tests/init_griefing.rs`).
+fn create_pda_account<'a>(
+    payer: &AccountInfo<'a>,
+    target: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
+    owner: &Pubkey,
+    space: usize,
+    rent: &Rent,
+    seeds: &[&[u8]],
+) -> ProgramResult {
+    let required = rent.minimum_balance(space);
+
+    if target.lamports() == 0 {
+        // Fast path: empty + unfunded, a single create_account does it all.
+        return invoke_signed(
+            &system_instruction::create_account(
+                payer.key,
+                target.key,
+                required,
+                space as u64,
+                owner,
+            ),
+            &[payer.clone(), target.clone(), system_program.clone()],
+            &[seeds],
+        );
+    }
+
+    // Pre-funded path: fund to rent-exemption, then allocate + assign under seeds.
+    let current = target.lamports();
+    if current < required {
+        invoke(
+            &system_instruction::transfer(payer.key, target.key, required - current),
+            &[payer.clone(), target.clone(), system_program.clone()],
+        )?;
+    }
+    invoke_signed(
+        &system_instruction::allocate(target.key, space as u64),
+        &[target.clone(), system_program.clone()],
+        &[seeds],
+    )?;
+    invoke_signed(
+        &system_instruction::assign(target.key, owner),
+        &[target.clone(), system_program.clone()],
+        &[seeds],
+    )
 }

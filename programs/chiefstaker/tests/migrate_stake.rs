@@ -322,6 +322,56 @@ async fn migrate_legacy_source() {
     assert_eq!(dest_us.unstake_request_settled, 0);
 }
 
+/// Griefing regression: a third party pre-funds the deterministic destination
+/// stake PDA (["stake", pool, new_owner]) with 1 stray lamport (system-owned,
+/// empty data). Plain `create_account` would fail on the non-zero balance and
+/// permanently brick migration to that recipient; the pre-fund-tolerant
+/// creation path (top up to rent + allocate + assign under seeds) must succeed
+/// and produce the same final state as the happy path.
+#[tokio::test]
+async fn migrate_succeeds_when_dest_pda_is_pre_funded() {
+    let staked: u64 = 1_000_000_000;
+    let (mut pt, fx) = setup(staked, 0, 12345);
+
+    let new_owner = Pubkey::new_unique();
+    let (dest_pda, dest_bump) = Pubkey::find_program_address(
+        &[STAKE_SEED, fx.pool_pda.as_ref(), new_owner.as_ref()],
+        &fx.program_id,
+    );
+    // GRIEF: pre-fund the dest PDA with a stray lamport, system-owned, empty data.
+    pt.add_account(dest_pda, Account {
+        lamports: 1,
+        data: vec![],
+        owner: system_program::id(), executable: false, rent_epoch: 0,
+    });
+
+    let (mut banks, payer, blockhash) = pt.start().await;
+    let ix = migrate_ix(fx.program_id, fx.pool_pda, fx.source_stake_pda, fx.source.pubkey(), dest_pda, new_owner);
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&payer.pubkey()), &[&payer, &fx.source], blockhash);
+    banks
+        .process_transaction(tx)
+        .await
+        .expect("migrate must succeed even when the dest PDA was pre-funded");
+
+    // Source closed.
+    let src = banks.get_account(fx.source_stake_pda).await.unwrap();
+    let closed = src.map(|a| a.lamports == 0 || a.data.iter().all(|b| *b == 0)).unwrap_or(true);
+    assert!(closed, "source stake must be closed");
+
+    // Dest created at full LEN, program-owned, rent-exempt, with copied state.
+    let dest = banks.get_account(dest_pda).await.unwrap().expect("dest must exist");
+    assert_eq!(dest.owner, fx.program_id, "dest must be owned by the program");
+    assert_eq!(dest.data.len(), UserStake::LEN);
+    assert!(dest.lamports >= rent_for(UserStake::LEN), "dest must be rent-exempt");
+    let dest_us = UserStake::try_from_slice(&dest.data).unwrap();
+    assert_eq!(dest_us.owner, new_owner);
+    assert_eq!(dest_us.bump, dest_bump);
+    assert_eq!(dest_us.pool, fx.pool_pda);
+    assert_eq!(dest_us.amount, staked, "amount preserved");
+    assert_eq!(dest_us.last_stake_time, 12345, "last_stake_time preserved");
+    assert!(dest_us.is_initialized());
+}
+
 /// `last_stake_time` is preserved verbatim, so the new owner inherits the
 /// source's remaining lock window. This is the property that prevents lock
 /// evasion via migration.
