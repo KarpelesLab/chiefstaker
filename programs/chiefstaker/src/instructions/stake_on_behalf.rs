@@ -6,10 +6,9 @@ use solana_program::{
     clock::Clock,
     entrypoint::ProgramResult,
     msg,
-    program::{invoke, invoke_signed},
+    program::invoke,
     pubkey::Pubkey,
     rent::Rent,
-    system_instruction,
     sysvar::Sysvar,
 };
 use spl_token_2022::extension::StateWithExtensions;
@@ -17,7 +16,10 @@ use spl_token_2022::extension::StateWithExtensions;
 use crate::{
     error::StakingError,
     math::{exp_time_ratio, wad_mul, MAX_EXP_INPUT, U256, WAD},
-    state::{is_valid_token_program, update_pool_member_count, StakingPool, UserStake, STAKE_SEED},
+    state::{
+        create_pda_account, is_valid_token_program, update_pool_member_count, StakingPool,
+        UserStake, STAKE_SEED,
+    },
 };
 
 /// Stake tokens on behalf of another user (beneficiary)
@@ -100,13 +102,14 @@ pub fn process_stake_on_behalf(
 
     let clock = Clock::get()?;
     let current_time = clock.unix_timestamp;
+    let rent = Rent::get()?;
 
     // Fold any unsynced direct-donation lamports into the accumulator BEFORE
     // snapshotting reward_debt or growing total_staked. Otherwise a just-in-time
     // staker could dilute pending rewards (stake against the stale accumulator,
     // then run the permissionless SyncRewards over the inflated total_staked)
     // and siphon SOL that belongs to the pre-existing stakers.
-    let rent_exempt_minimum = Rent::get()?.minimum_balance(pool_info.data_len());
+    let rent_exempt_minimum = rent.minimum_balance(pool_info.data_len());
     pool.sync_pending_rewards(pool_info.lamports(), rent_exempt_minimum, current_time)?;
 
     // Check if pool needs rebasing (sum_stake_exp near overflow)
@@ -138,9 +141,10 @@ pub fn process_stake_on_behalf(
             return Err(StakingError::BelowMinimumStake.into());
         }
 
-        // Create new beneficiary stake account (staker pays rent)
-        let rent = Rent::get()?;
-        let stake_rent = rent.minimum_balance(UserStake::LEN);
+        // Create new beneficiary stake account (staker pays rent). Uses the
+        // pre-fund-tolerant helper so a griefer cannot brick first-time staking
+        // by sending the deterministic stake PDA a lamport beforehand (plain
+        // create_account requires a zero balance at the destination).
         let stake_seeds = &[
             STAKE_SEED,
             pool_info.key.as_ref(),
@@ -148,20 +152,14 @@ pub fn process_stake_on_behalf(
             &[stake_bump],
         ];
 
-        invoke_signed(
-            &system_instruction::create_account(
-                staker_info.key,      // staker pays rent
-                beneficiary_stake_info.key,
-                stake_rent,
-                UserStake::LEN as u64,
-                program_id,
-            ),
-            &[
-                staker_info.clone(),
-                beneficiary_stake_info.clone(),
-                system_program_info.clone(),
-            ],
-            &[stake_seeds],
+        create_pda_account(
+            staker_info, // staker pays rent
+            beneficiary_stake_info,
+            system_program_info,
+            program_id,
+            UserStake::LEN,
+            &rent,
+            stake_seeds,
         )?;
 
         // Initialize user stake with beneficiary as owner

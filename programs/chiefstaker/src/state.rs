@@ -1,7 +1,14 @@
 //! Account state structures for the staking program
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, pubkey::Pubkey, sysvar::Sysvar};
+use solana_program::{
+    account_info::AccountInfo,
+    program::{invoke, invoke_signed},
+    pubkey::Pubkey,
+    rent::Rent,
+    system_instruction,
+    sysvar::Sysvar,
+};
 
 use crate::error::StakingError;
 use crate::math::{exp_neg_time_ratio, wad_div, wad_mul, U256, WAD};
@@ -304,6 +311,64 @@ impl StakingPool {
 
         Ok(())
     }
+}
+
+/// Create a program-derived account at `target`, tolerating the case where the
+/// target PDA has already been funded with lamports by a third party.
+///
+/// `system_instruction::create_account` requires the destination to hold zero
+/// lamports, so anyone can permanently block creation of a deterministic PDA by
+/// sending it 1 lamport first. To avoid that DoS we, when the account is already
+/// funded, top it up to rent-exemption and then `allocate` + `assign` it under
+/// its own seeds — operations that require the PDA's signature and therefore
+/// cannot be performed by a griefer who only transferred lamports.
+///
+/// (Mirrors the private helper in initialize.rs; shared here so the user-stake
+/// PDA creation paths in stake.rs / stake_on_behalf.rs get the same hardening.)
+pub fn create_pda_account<'a>(
+    payer: &AccountInfo<'a>,
+    target: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
+    owner: &Pubkey,
+    space: usize,
+    rent: &Rent,
+    seeds: &[&[u8]],
+) -> Result<(), solana_program::program_error::ProgramError> {
+    let required = rent.minimum_balance(space);
+
+    if target.lamports() == 0 {
+        // Fast path: empty + unfunded, a single create_account does it all.
+        return invoke_signed(
+            &system_instruction::create_account(
+                payer.key,
+                target.key,
+                required,
+                space as u64,
+                owner,
+            ),
+            &[payer.clone(), target.clone(), system_program.clone()],
+            &[seeds],
+        );
+    }
+
+    // Pre-funded path: fund to rent-exemption, then allocate + assign under seeds.
+    let current = target.lamports();
+    if current < required {
+        invoke(
+            &system_instruction::transfer(payer.key, target.key, required - current),
+            &[payer.clone(), target.clone(), system_program.clone()],
+        )?;
+    }
+    invoke_signed(
+        &system_instruction::allocate(target.key, space as u64),
+        &[target.clone(), system_program.clone()],
+        &[seeds],
+    )?;
+    invoke_signed(
+        &system_instruction::assign(target.key, owner),
+        &[target.clone(), system_program.clone()],
+        &[seeds],
+    )
 }
 
 /// User stake account
