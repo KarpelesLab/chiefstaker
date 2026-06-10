@@ -265,7 +265,14 @@ pub fn process_stake_on_behalf(
             .ok_or(StakingError::MathOverflow)?;
 
         user_stake.amount = new_total;
-        user_stake.last_stake_time = current_time;
+        // Only refresh the lock clock when the signing staker IS the position
+        // owner. The beneficiary does not sign StakeOnBehalf, so a non-owner
+        // must not be able to extend the owner's lock: otherwise anyone could
+        // add 1 token to a victim's position to reset last_stake_time forever,
+        // permanently blocking unstake in pools with lock_duration_seconds > 0.
+        if staker_info.key == beneficiary_info.key {
+            user_stake.last_stake_time = current_time;
+        }
         // exp_start_factor: UNCHANGED — maturity depends only on start time
         // claimed_rewards_wad: UNCHANGED — pending rewards stay exactly the same
 
