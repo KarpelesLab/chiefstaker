@@ -159,7 +159,18 @@ pub fn process_claim_rewards(
         return Err(StakingError::InsufficientRewardBalance.into());
     }
 
-    let transfer_amount = pending_lamports.min(available_rewards as u128) as u64;
+    let transfer_amount = if is_residual_claim {
+        // Residual payouts service legacy obligations reserved in
+        // pool.total_residual_unpaid. Cap at that reservation in addition to the
+        // available lamports so a legacy account whose stored reward_debt exceeds
+        // the remaining reservation cannot over-draw SOL that backs active
+        // stakers' pending rewards.
+        pending_lamports
+            .min(available_rewards as u128)
+            .min(pool.total_residual_unpaid as u128) as u64
+    } else {
+        pending_lamports.min(available_rewards as u128) as u64
+    };
 
     // Transfer SOL from pool to user
     **pool_info.try_borrow_mut_lamports()? -= transfer_amount;
@@ -174,6 +185,17 @@ pub fn process_claim_rewards(
         user_stake.reward_debt = user_stake.reward_debt.saturating_sub(paid_wad);
         // Residual debts are tracked in total_residual_unpaid (not total_reward_debt)
         pool.total_residual_unpaid = pool.total_residual_unpaid.saturating_sub(transfer_amount);
+
+        // Any residual debt above the remaining pool-level reservation is
+        // unfundable forever: total_residual_unpaid is legacy-only and never
+        // incremented by current code. Forget the excess so the account is not
+        // locked open by CloseStakeAccount's AccountNotEmpty check. No-op when
+        // the normal invariant (sum of residual reward_debts, in lamports,
+        // <= total_residual_unpaid) holds.
+        let max_payable_wad = (pool.total_residual_unpaid as u128).saturating_mul(WAD);
+        if user_stake.reward_debt > max_payable_wad {
+            user_stake.reward_debt = max_payable_wad;
+        }
     } else {
         // Track cumulative claimed amount (no snapshot reset).
         // Snapshot stays fixed so weight maturation isn't forfeited on claim.
