@@ -59,8 +59,10 @@ pub fn settle_unstake_accounting<'a>(
         pool.tau_seconds,
     )?;
 
-    // Track unpaid rewards (WAD-scaled) — only meaningful on the full-unstake
-    // path where it is redistributed via last_synced_lamports.
+    // Track unpaid rewards (WAD-scaled) — nonzero only when the payout below is
+    // capped by the pool balance. On a full unstake it is redistributed via
+    // last_synced_lamports; on a partial unstake the surviving position keeps
+    // its (A-X)/A share pending and the unstaked X/A share is redistributed.
     let mut unpaid_rewards_wad: u128 = 0;
 
     // Compute delta_rps for the position being settled.  Needed for both
@@ -195,13 +197,36 @@ pub fn settle_unstake_accounting<'a>(
             .to_u128()
             .ok_or(StakingError::MathOverflow)?;
 
-        // claimed_rewards_wad_new = full_entitlement * (A-X) / A.
-        // full_entitlement already represents (old claimed + pending including
-        // any unpaid portion) since pending = full_entitlement - old claimed.
-        let wide_claimed = U256::from_u128(full_entitlement) * U256::from_u128(new_amount_u128);
+        // claimed_rewards_wad_new = settled_entitlement * (A-X) / A, where
+        // settled_entitlement = old claimed + what was ACTUALLY paid now.
+        // In the normal (fully funded) case the payout is not capped, so
+        // unpaid_rewards_wad == 0 and settled_entitlement == full_entitlement.
+        // When the payout IS capped by the pool balance, marking the full
+        // entitlement as claimed would silently destroy the unpaid portion;
+        // using the settled amount keeps the surviving position's (A-X)/A
+        // share of it pending (the per-token snapshot D/A is unchanged, so the
+        // entitlement math recovers it once the pool is funded again).
+        let settled_entitlement = full_entitlement.saturating_sub(unpaid_rewards_wad);
+        let wide_claimed = U256::from_u128(settled_entitlement) * U256::from_u128(new_amount_u128);
         user_stake.claimed_rewards_wad = (wide_claimed / U256::from_u128(old_amount_u128))
             .to_u128()
             .ok_or(StakingError::MathOverflow)?;
+
+        // The unstaked fraction X/A of the unpaid remainder can no longer be
+        // claimed by the surviving position (its future entitlement scales by
+        // (A-X)/A), so redistribute that share to the remaining stakers via
+        // last_synced_lamports — exactly like the full-unstake branch does for
+        // the whole remainder. No-op when the payout was not capped.
+        if unpaid_rewards_wad > 0 {
+            let wide_unpaid = U256::from_u128(unpaid_rewards_wad) * U256::from_u128(amount as u128);
+            let unstaked_unpaid_wad = (wide_unpaid / U256::from_u128(old_amount_u128))
+                .to_u128()
+                .ok_or(StakingError::MathOverflow)?;
+            let remainder_lamports = (unstaked_unpaid_wad / WAD) as u64;
+            if remainder_lamports > 0 {
+                pool.last_synced_lamports = pool.last_synced_lamports.saturating_sub(remainder_lamports);
+            }
+        }
 
         // Update pool-level aggregate: subtract old, add new (saturating for bootstrapping)
         pool.total_reward_debt = pool
