@@ -101,6 +101,14 @@ pub fn process_stake_on_behalf(
     let clock = Clock::get()?;
     let current_time = clock.unix_timestamp;
 
+    // Fold any unsynced direct-donation lamports into the accumulator BEFORE
+    // snapshotting reward_debt or growing total_staked. Otherwise a just-in-time
+    // staker could dilute pending rewards (stake against the stale accumulator,
+    // then run the permissionless SyncRewards over the inflated total_staked)
+    // and siphon SOL that belongs to the pre-existing stakers.
+    let rent_exempt_minimum = Rent::get()?.minimum_balance(pool_info.data_len());
+    pool.sync_pending_rewards(pool_info.lamports(), rent_exempt_minimum, current_time)?;
+
     // Check if pool needs rebasing (sum_stake_exp near overflow)
     if pool.get_sum_stake_exp().needs_rebase() {
         return Err(StakingError::PoolRequiresSync.into());

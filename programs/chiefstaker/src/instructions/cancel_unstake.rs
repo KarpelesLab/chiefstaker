@@ -3,9 +3,12 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
+    clock::Clock,
     entrypoint::ProgramResult,
     msg,
     pubkey::Pubkey,
+    rent::Rent,
+    sysvar::Sysvar,
 };
 
 use crate::{
@@ -62,6 +65,20 @@ pub fn process_cancel_unstake_request(
     if pool.get_sum_stake_exp().needs_rebase() {
         return Err(StakingError::PoolRequiresSync.into());
     }
+
+    // Fold any unsynced direct-donation lamports into the accumulator BEFORE
+    // taking the fresh reward snapshot and re-adding the frozen coins to
+    // total_staked. Otherwise cancelling a request just-in-time would dilute
+    // pending rewards that belong to the currently-active stakers (same stale
+    // accumulator issue as Stake / StakeOnBehalf).
+    let clock = Clock::get()?;
+    let rent = Rent::get()?;
+    let rent_exempt_minimum = rent.minimum_balance(pool_info.data_len());
+    pool.sync_pending_rewards(
+        pool_info.lamports(),
+        rent_exempt_minimum,
+        clock.unix_timestamp,
+    )?;
 
     // Realloc legacy accounts to current size (payer = user)
     // System program is optional trailing account, only needed for legacy accounts

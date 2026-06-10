@@ -4,7 +4,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{account_info::AccountInfo, pubkey::Pubkey, sysvar::Sysvar};
 
 use crate::error::StakingError;
-use crate::math::{exp_neg_time_ratio, wad_mul, U256};
+use crate::math::{exp_neg_time_ratio, wad_div, wad_mul, U256, WAD};
 
 /// Seed prefixes for PDAs
 pub const POOL_SEED: &[u8] = b"pool";
@@ -246,6 +246,64 @@ impl StakingPool {
         Pubkey::find_program_address(&[TOKEN_VAULT_SEED, pool.as_ref()], program_id)
     }
 
+    /// Fold any not-yet-distributed lamports sitting on the pool account into
+    /// `acc_reward_per_weighted_share`, replicating `process_sync_rewards` exactly.
+    ///
+    /// SOL can land on the pool PDA via direct transfers (e.g. pump.fun fees) and
+    /// is normally credited by the permissionless SyncRewards crank. Any
+    /// instruction that snapshots `reward_debt` against the accumulator or grows
+    /// `total_staked` (Stake / StakeOnBehalf / CancelUnstake) MUST call this
+    /// first: otherwise a just-in-time staker could inflate `total_staked`
+    /// against a stale accumulator, run SyncRewards, and siphon rewards that
+    /// were donated while only the pre-existing stakers were active.
+    ///
+    /// Semantics match sync_rewards.rs:
+    /// - available = pool_lamports - rent_exempt_minimum (saturating)
+    /// - undistributed = available - last_synced_lamports (saturating)
+    /// - if `total_staked == 0`, distribution is deferred (last_synced_lamports
+    ///   is NOT advanced) so the rewards fold in once stakers exist — same as
+    ///   the no-stakers deferral in sync_rewards / deposit.
+    pub fn sync_pending_rewards(
+        &mut self,
+        pool_lamports: u64,
+        rent_exempt_minimum: u64,
+        current_time: i64,
+    ) -> Result<(), solana_program::program_error::ProgramError> {
+        let current_available = pool_lamports.saturating_sub(rent_exempt_minimum);
+
+        // New rewards = current balance - what we knew about
+        let new_rewards = current_available.saturating_sub(self.last_synced_lamports);
+        if new_rewards == 0 {
+            return Ok(());
+        }
+
+        // Denominator: total_staked * WAD (max weight, not time-varying)
+        let total_staked_wad = self
+            .total_staked
+            .checked_mul(WAD)
+            .ok_or(StakingError::MathOverflow)?;
+        if total_staked_wad == 0 {
+            // No stakers to distribute to. Leave rewards pending.
+            return Ok(());
+        }
+
+        // Calculate reward per share using max weight denominator
+        let amount_wad = (new_rewards as u128)
+            .checked_mul(WAD)
+            .ok_or(StakingError::MathOverflow)?;
+        let reward_per_share = wad_div(amount_wad, total_staked_wad)?;
+
+        // Update accumulator
+        self.acc_reward_per_weighted_share = self
+            .acc_reward_per_weighted_share
+            .checked_add(reward_per_share)
+            .ok_or(StakingError::MathOverflow)?;
+
+        self.last_update_time = current_time;
+        self.last_synced_lamports = current_available;
+
+        Ok(())
+    }
 }
 
 /// User stake account
@@ -738,6 +796,52 @@ mod tests {
         assert_eq!(deserialized.total_rewards_claimed, 999_999);
         assert_eq!(deserialized.claimed_rewards_wad, 42_000_000_000_000_000_000);
         assert_eq!(deserialized.unstake_request_settled, 1);
+    }
+
+    #[test]
+    fn test_sync_pending_rewards_folds_undistributed() {
+        let mut pool = StakingPool::new(
+            Pubkey::default(),
+            Pubkey::default(),
+            Pubkey::default(),
+            Pubkey::default(),
+            2592000,
+            0,
+            255,
+        );
+        pool.total_staked = 1_000;
+
+        // 600 lamports on the account, 100 rent minimum, nothing synced yet
+        // → 500 undistributed lamports folded over 1000 staked tokens.
+        pool.sync_pending_rewards(600, 100, 42).unwrap();
+        assert_eq!(pool.acc_reward_per_weighted_share, 500 * WAD / 1_000);
+        assert_eq!(pool.last_synced_lamports, 500);
+        assert_eq!(pool.last_update_time, 42);
+
+        // Idempotent: nothing new to sync, accumulator and timestamps untouched.
+        pool.sync_pending_rewards(600, 100, 43).unwrap();
+        assert_eq!(pool.acc_reward_per_weighted_share, 500 * WAD / 1_000);
+        assert_eq!(pool.last_synced_lamports, 500);
+        assert_eq!(pool.last_update_time, 42);
+    }
+
+    #[test]
+    fn test_sync_pending_rewards_defers_when_no_stakers() {
+        let mut pool = StakingPool::new(
+            Pubkey::default(),
+            Pubkey::default(),
+            Pubkey::default(),
+            Pubkey::default(),
+            2592000,
+            0,
+            255,
+        );
+        // No stakers: rewards stay pending — last_synced_lamports must NOT
+        // advance (matches the sync_rewards / deposit deferral semantics).
+        pool.sync_pending_rewards(600, 100, 42).unwrap();
+        assert_eq!(pool.acc_reward_per_weighted_share, 0);
+        assert_eq!(pool.last_synced_lamports, 0);
+        assert_eq!(pool.last_update_time, 0);
     }
 
     #[test]
