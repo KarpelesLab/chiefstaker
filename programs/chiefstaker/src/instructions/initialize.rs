@@ -16,6 +16,9 @@ use solana_program::program_option::COption;
 use solana_program::program_pack::Pack;
 use spl_token_2022::{
     extension::{
+        confidential_transfer::ConfidentialTransferMint,
+        default_account_state::DefaultAccountState,
+        non_transferable::NonTransferable,
         permanent_delegate::PermanentDelegate,
         transfer_fee::TransferFeeConfig,
         transfer_hook::TransferHook,
@@ -111,6 +114,43 @@ pub fn process_initialize_pool(
         // state or extract MEV.
         if mint_state.get_extension::<TransferHook>().is_ok() {
             msg!("Token 2022 mints with TransferHook extension are not supported");
+            return Err(StakingError::UnsupportedMintExtension.into());
+        }
+
+        // Reject mints with NonTransferable — tokens from such a mint can
+        // never be transferred, so staking into (and unstaking out of) the
+        // vault is impossible; the pool would be bricked from creation.
+        if mint_state.get_extension::<NonTransferable>().is_ok() {
+            msg!("Token 2022 mints with NonTransferable extension are not supported");
+            return Err(StakingError::UnsupportedMintExtension.into());
+        }
+
+        // Reject mints with DefaultAccountState — a default state of Frozen
+        // would leave the vault token account frozen on creation, making the
+        // pool permanently unusable. Rejected outright (regardless of the
+        // current default) — simpler and safer than special-casing Frozen.
+        if mint_state.get_extension::<DefaultAccountState>().is_ok() {
+            msg!("Token 2022 mints with DefaultAccountState extension are not supported");
+            return Err(StakingError::UnsupportedMintExtension.into());
+        }
+
+        // Reject mints with ConfidentialTransferMint — confidential balances
+        // would undermine the vault-balance == total_staked invariant the
+        // program relies on for solvency.
+        if mint_state.get_extension::<ConfidentialTransferMint>().is_ok() {
+            msg!("Token 2022 mints with ConfidentialTransfer extension are not supported");
+            return Err(StakingError::UnsupportedMintExtension.into());
+        }
+
+        // Reject mints carrying any extension type this build does not know
+        // about. The pinned spl-token-2022 5.0 crate predates extensions such
+        // as Pausable/PausableConfig — a pausable mint lets its creator halt
+        // all transfers after users stake, locking principal indefinitely.
+        // `get_extension_types()` fails on unknown extension discriminants
+        // (and on malformed TLV data), so any error here means the mint
+        // carries an extension we cannot vet — reject it.
+        if mint_state.get_extension_types().is_err() {
+            msg!("Token 2022 mint carries an unknown or malformed extension; not supported");
             return Err(StakingError::UnsupportedMintExtension.into());
         }
     }
