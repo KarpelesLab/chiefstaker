@@ -32,7 +32,8 @@ use spl_token_metadata_interface::state::TokenMetadata;
 use crate::{
     error::StakingError,
     state::{
-        is_valid_token_program, StakingPool, METAPLEX_PROGRAM_ID, METEORA_DBC_CREATOR_DISC,
+        is_valid_token_program, is_whitelisted_pool_creator, StakingPool, METAPLEX_PROGRAM_ID,
+        METEORA_DBC_CREATOR_DISC,
         METEORA_DBC_CREATOR_PROGRAM_ID, PFEE_PROGRAM_ID, PFEE_SHARING_CONFIG_DISC, POOL_SEED,
         PUMP_AMM_POOL_DISC, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, TOKEN_VAULT_SEED,
     },
@@ -158,8 +159,14 @@ pub fn process_initialize_pool(
     // === Authority check: signer must match a known authority for this mint ===
     let mut authority_verified = false;
 
+    // 0. Whitelisted operators may create a pool for any mint, regardless of
+    //    whether they are one of the mint's recognized authorities.
+    if is_whitelisted_pool_creator(authority_info.key) {
+        authority_verified = true;
+    }
+
     // 1. Token 2022: check metadata update_authority
-    if *token_program_info.key == spl_token_2022::id() {
+    if !authority_verified && *token_program_info.key == spl_token_2022::id() {
         let pod_mint = PodStateWithExtensions::<PodMint>::unpack(&mint_data)?;
         if let Ok(token_metadata) = pod_mint.get_variable_len_extension::<TokenMetadata>() {
             let update_auth_option: Option<Pubkey> = token_metadata.update_authority.into();

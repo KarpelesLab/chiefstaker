@@ -81,6 +81,37 @@ pub const METEORA_DBC_CREATOR_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
 /// Discriminator for Meteora DBC creator account
 pub const METEORA_DBC_CREATOR_DISC: [u8; 8] = [36, 36, 123, 35, 158, 89, 75, 41];
 
+/// Whitelisted pool creators.
+///
+/// Signers in this list may initialize a staking pool for any mint without
+/// proving they are one of the mint's recognized authorities (mint authority,
+/// metadata update authority, PumpFun/PumpSwap/Meteora/pfee creator, etc.).
+/// This is an operational allowlist for trusted operators.
+///
+/// HjDTtYiKNVnRcfQExf5YufEuCghmKN8mXnD8iixep9RL ("Van")
+/// 3k9z7k83NfzG8AAKy2DTqKkSCYGYj3b8opKgvQRFEWah ("Mark")
+pub const POOL_CREATOR_WHITELIST: [Pubkey; 2] = [
+    // "Van" — HjDTtYiKNVnRcfQExf5YufEuCghmKN8mXnD8iixep9RL
+    Pubkey::new_from_array([
+        0xf8, 0x8b, 0x7a, 0x39, 0x71, 0x7f, 0x46, 0x22,
+        0x58, 0x95, 0x18, 0x16, 0x78, 0x4e, 0x63, 0xd5,
+        0x9a, 0x76, 0x54, 0x62, 0x56, 0xd8, 0xd9, 0x93,
+        0x5f, 0xdf, 0xb4, 0x66, 0xbd, 0xee, 0x56, 0x6b,
+    ]),
+    // "Mark" — 3k9z7k83NfzG8AAKy2DTqKkSCYGYj3b8opKgvQRFEWah
+    Pubkey::new_from_array([
+        0x28, 0xc5, 0x81, 0xfb, 0xb6, 0xa3, 0xaa, 0x26,
+        0x92, 0x91, 0xcf, 0x11, 0x80, 0x1a, 0x00, 0x44,
+        0xbf, 0x62, 0x01, 0x1a, 0xdc, 0xa9, 0x69, 0x14,
+        0xa4, 0xf0, 0xbc, 0x4b, 0x0b, 0x36, 0x09, 0xde,
+    ]),
+];
+
+/// Returns true if `key` is a whitelisted pool creator (see [`POOL_CREATOR_WHITELIST`]).
+pub fn is_whitelisted_pool_creator(key: &Pubkey) -> bool {
+    POOL_CREATOR_WHITELIST.contains(key)
+}
+
 /// Account discriminators
 pub const POOL_DISCRIMINATOR: [u8; 8] = [0xc7, 0x5f, 0x7e, 0x2d, 0x3b, 0x1a, 0x9c, 0x4e];
 pub const USER_STAKE_DISCRIMINATOR: [u8; 8] = [0xa3, 0x8b, 0x5d, 0x2f, 0x7c, 0x4a, 0x1e, 0x9d];
@@ -963,5 +994,21 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(METEORA_DBC_CREATOR_PROGRAM_ID, expected);
+    }
+
+    #[test]
+    fn test_pool_creator_whitelist() {
+        let van: Pubkey = "HjDTtYiKNVnRcfQExf5YufEuCghmKN8mXnD8iixep9RL"
+            .parse()
+            .unwrap();
+        let mark: Pubkey = "3k9z7k83NfzG8AAKy2DTqKkSCYGYj3b8opKgvQRFEWah"
+            .parse()
+            .unwrap();
+        assert_eq!(POOL_CREATOR_WHITELIST[0], van);
+        assert_eq!(POOL_CREATOR_WHITELIST[1], mark);
+
+        assert!(is_whitelisted_pool_creator(&van));
+        assert!(is_whitelisted_pool_creator(&mark));
+        assert!(!is_whitelisted_pool_creator(&Pubkey::default()));
     }
 }
