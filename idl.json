@@ -1276,6 +1276,16 @@
       "code": 6035,
       "name": "ResidualRewardsPending",
       "msg": "Claim residual rewards before cancelling a full unstake request"
+    },
+    {
+      "code": 6036,
+      "name": "SelfMigrateNotAllowed",
+      "msg": "Cannot migrate a stake position to its own owner"
+    },
+    {
+      "code": 6037,
+      "name": "RemainingStakeBelowMinimum",
+      "msg": "Partial unstake would leave remaining stake below pool minimum"
     }
   ]
 }

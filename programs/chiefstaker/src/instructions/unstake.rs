@@ -500,6 +500,14 @@ pub fn process_unstake(
         return Err(StakingError::InsufficientStakeBalance.into());
     }
 
+    // A partial unstake must leave at least min_stake_amount staked. Withdrawing
+    // the whole position is always allowed (the minimum is a floor on what a
+    // member must keep staked, not a per-transaction amount).
+    let remaining = user_stake.amount - amount;
+    if remaining > 0 && pool.min_stake_amount > 0 && remaining < pool.min_stake_amount {
+        return Err(StakingError::RemainingStakeBelowMinimum.into());
+    }
+
     // Block if pending unstake request
     if user_stake.has_pending_unstake_request() {
         return Err(StakingError::PendingUnstakeRequestExists.into());

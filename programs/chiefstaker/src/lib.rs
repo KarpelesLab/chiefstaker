@@ -61,7 +61,9 @@ pub enum StakingInstruction {
         amount: u64,
     },
 
-    /// Unstake tokens from the pool
+    /// Unstake tokens from the pool.
+    /// A partial unstake must leave at least `min_stake_amount` staked (if set);
+    /// unstaking the full position is always allowed.
     ///
     /// Accounts:
     /// 0. `[writable]` Pool account
@@ -134,7 +136,8 @@ pub enum StakingInstruction {
     /// Request unstake - starts cooldown period.
     /// The requested coins stop earning immediately (removed from pool weight) and
     /// their already-earned rewards are settled/paid out. Only the token transfer
-    /// is deferred to CompleteUnstake.
+    /// is deferred to CompleteUnstake. A partial request must leave at least
+    /// `min_stake_amount` staked (if set); requesting the full position is always allowed.
     ///
     /// Accounts:
     /// 0. `[writable]` Pool account

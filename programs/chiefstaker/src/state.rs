@@ -163,7 +163,9 @@ pub struct StakingPool {
     /// Last known lamport balance (for sync_rewards to detect new deposits)
     pub last_synced_lamports: u64,
 
-    /// Minimum stake amount (0 = no minimum)
+    /// Minimum staked position size (0 = no minimum). Enforced on the user's
+    /// total stake after a Stake/StakeOnBehalf and on the remainder after a
+    /// partial Unstake/RequestUnstake; a full withdrawal is always allowed.
     pub min_stake_amount: u64,
 
     /// Lock duration in seconds after staking before unstake is allowed (0 = no lock)

@@ -86,7 +86,7 @@ Pool creators can configure these settings at any time (until authority is renou
 
 | Setting | Default | Max | Description |
 |---------|---------|-----|-------------|
-| `min_stake_amount` | 0 (none) | -- | Minimum tokens required to stake |
+| `min_stake_amount` | 0 (none) | 10^15 base units | Minimum position size a member must keep staked. Top-ups of any size are fine once at/above it; a partial unstake must leave at least this much (full withdrawal always allowed) |
 | `lock_duration_seconds` | 0 (none) | 365 days | Time staker must wait after last deposit before unstaking |
 | `unstake_cooldown_seconds` | 0 (none) | 30 days | Required cooldown period via request/complete flow |
 

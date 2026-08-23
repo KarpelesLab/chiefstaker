@@ -114,6 +114,9 @@ pub enum StakingError {
 
     #[error("Cannot migrate a stake position to its own owner")]
     SelfMigrateNotAllowed,
+
+    #[error("Partial unstake would leave remaining stake below pool minimum")]
+    RemainingStakeBelowMinimum,
 }
 
 impl From<StakingError> for ProgramError {

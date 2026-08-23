@@ -1594,6 +1594,104 @@ async function runTests() {
     await ctx.stake(user, userToken, BigInt(1_000_000_000));
   });
 
+  // Test: Min stake is a floor on the position, not a per-tx amount. Top-ups of
+  // any size are fine once at/above it; a partial unstake may not drop below it;
+  // a full unstake is always allowed.
+  await test(`[${tokenProgramLabel}] MinStake: small top-ups ok, partial unstake must keep minimum`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    // Min stake = 1 token (9 decimals)
+    await ctx.updatePoolSettings(ctx.payer, BigInt(1_000_000_000), null, null);
+
+    const user = Keypair.generate();
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(3_000_000_000));
+
+    // Initial stake at the minimum
+    await ctx.stake(user, userToken, BigInt(1_000_000_000));
+
+    // Top-up far below the minimum is fine (position already >= min)
+    await ctx.stake(user, userToken, BigInt(1));
+    await ctx.stake(user, userToken, BigInt(499_999_999));
+    // position = 1.5 tokens
+
+    // Partial unstake that would leave 0.5 tokens (< min) must fail
+    let belowMinFailed = false;
+    try {
+      await ctx.unstake(user, userToken, BigInt(1_000_000_000));
+    } catch (e) {
+      belowMinFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x25')) {
+        throw new Error(`Expected RemainingStakeBelowMinimum (0x25), got: ${errMsg}`);
+      }
+    }
+    if (!belowMinFailed) throw new Error('Partial unstake below minimum should fail');
+
+    // Partial unstake leaving exactly the minimum is fine
+    await ctx.unstake(user, userToken, BigInt(500_000_000));
+    // position = 1.0 token
+
+    // Any further partial unstake (even 1 base unit) would go below min
+    let oneUnitFailed = false;
+    try {
+      await ctx.unstake(user, userToken, BigInt(1));
+    } catch (e) {
+      oneUnitFailed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x25')) {
+        throw new Error(`Expected RemainingStakeBelowMinimum (0x25), got: ${errMsg}`);
+      }
+    }
+    if (!oneUnitFailed) throw new Error('1-unit partial unstake at minimum should fail');
+
+    // Full unstake is always allowed
+    await ctx.unstake(user, userToken, BigInt(1_000_000_000));
+
+    const stakeAcct = await connection.getAccountInfo(deriveUserStakePDA(ctx.poolPDA, user.publicKey)[0]);
+    if (stakeAcct !== null) throw new Error('Stake account should be closed after full unstake');
+  });
+
+  // Test: Same floor applies to the cooldown RequestUnstake path
+  await test(`[${tokenProgramLabel}] MinStake: RequestUnstake must keep minimum or take everything`, async () => {
+    const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
+    await ctx.setup();
+    await ctx.createMint(9);
+    await ctx.initializePool(BigInt(2592000));
+
+    await ctx.updatePoolSettings(ctx.payer, BigInt(1_000_000_000), null, BigInt(60));
+
+    const user = Keypair.generate();
+    await airdropAndConfirm(connection, user.publicKey, LAMPORTS_PER_SOL);
+    const userToken = await ctx.createUserTokenAccount(user.publicKey);
+    await ctx.mintTokens(userToken, BigInt(2_000_000_000));
+    await ctx.stake(user, userToken, BigInt(1_500_000_000));
+
+    // Requesting 1 token would leave 0.5 (< min) -> rejected
+    let failed = false;
+    try {
+      await ctx.requestUnstake(user, BigInt(1_000_000_000));
+    } catch (e) {
+      failed = true;
+      const errMsg = (e as any).message || '';
+      if (!errMsg.includes('0x25')) {
+        throw new Error(`Expected RemainingStakeBelowMinimum (0x25), got: ${errMsg}`);
+      }
+    }
+    if (!failed) throw new Error('Partial request below minimum should fail');
+
+    // Requesting 0.5 leaves exactly the minimum -> ok
+    await ctx.requestUnstake(user, BigInt(500_000_000));
+    await ctx.cancelUnstakeRequest(user);
+
+    // Requesting the full position -> ok
+    await ctx.requestUnstake(user, BigInt(1_500_000_000));
+  });
+
   // Test: Lock duration blocks early unstake
   await test(`[${tokenProgramLabel}] LockDuration: blocks early unstake`, async () => {
     const ctx = new TestContext(connection, Keypair.generate(), programAuthority, tokenProgramId);
