@@ -655,7 +655,13 @@ impl UserStake {
             )?;
         }
 
-        account.realloc(Self::LEN, false)?;
+        // zero_init = true: callers deserialize the full LEN immediately after this
+        // call. Under the SIMD-0219/0460 memory model (account data direct
+        // mapping) a *read* past the account's real length faults
+        // (AccountDataTooSmall / InvalidRealloc) until the growth region has been
+        // *written*; the zeroing memset performs that write and extends the
+        // account first. Harmless under the legacy 10 KiB-padding model.
+        account.realloc(Self::LEN, true)?;
 
         Ok(())
     }
